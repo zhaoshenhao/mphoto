@@ -1,0 +1,42 @@
+photo_dir: "/mnt/d/tmp"
+temp_dir: "/tmp"
+parallel:
+  workers: 8
+
+database:
+  file: "sqlite.db"
+  face_table: "face"
+  bib_table: "bib"
+
+logging:
+  level: "INFO"
+  dir: "logs"
+  scan_prefix: "scan"
+  get_prefix: "get"
+  screen_print: True
+
+deepface:
+  detector: "mtcnn"
+    #detector: "retinaface" , "yolov8"
+    # opencv, ssd, dlib, mtcnn, fastmtcnn, retinaface, mediapipe, yolov8, yunet, centerface
+  alignment: True
+  model: "Facenet512"
+  use_gpu: True
+  debug: True
+  expand_percentage: 5
+  debug_dir: "face_debug"
+  detect_confidence: 0.3
+
+ocr:
+  use_gpu: True
+  debug: True
+  debug_dir: "ocr_debug"
+  min_size: 3
+  max_size: 5
+  confidence: 0.3
+
+search:
+  face_match_confidence: 0.5
+  face_detect_confidence: 0.3
+  similarity_metric: "cosine"
+  bib_confidence: 0.3
