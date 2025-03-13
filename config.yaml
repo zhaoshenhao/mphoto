@@ -9,7 +9,7 @@ database:
   bib_table: "bib"
 
 logging:
-  level: "INFO"
+  level: "DEBUG"
   dir: "logs"
   scan_prefix: "scan"
   get_prefix: "get"
@@ -36,7 +36,7 @@ ocr:
   confidence: 0.3
 
 search:
-  face_match_confidence: 0.5
-  face_detect_confidence: 0.3
+  face_match_confidence: 0.8
+  face_detect_confidence: 0.75
   similarity_metric: "cosine"
-  bib_confidence: 0.3
+  bib_confidence: 0.75

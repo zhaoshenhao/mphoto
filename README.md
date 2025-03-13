@@ -19,5 +19,6 @@ photo_retrieval/
 3. Then manually install tensorflow and ignore the conflict
 ```bash
 pip install -r requirements.txt
+pip install torch=2.6.0 torchvision==0.21.0
 pip install 'tensorflow[and-cuda]'
 ```
