@@ -4,7 +4,7 @@ import zipfile
 import numpy as np
 from utils import load_config, setup_logging
 from database import Database
-import cv2  # 添加 cv2 导入
+import cv2
 
 def extract_photos():
     parser = argparse.ArgumentParser()
@@ -44,15 +44,15 @@ def extract_photos():
             logger.warning("No face data in database, skipping face search")
         else:
             import faiss
-            from deepface import DeepFace
             logger.debug(f"FAISS index dimension: {db.faiss_index.d}")
             logger.debug(f"FAISS index contains {db.faiss_index.ntotal} embeddings")
 
+            from deepface import DeepFace
             expected_dim = config.get('deepface', {}).get('embedding_dim', 512)
+            c = db.conn.cursor()
             for face_path in args.faces:
                 try:
                     logger.debug(f"Processing face image: {face_path}")
-                    # 加载人脸图片并检查宽度
                     img = cv2.imread(face_path)
                     if img is None:
                         logger.error(f"Failed to load face image: {face_path}")
@@ -66,10 +66,10 @@ def extract_photos():
                         img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
                         logger.debug(f"Resized {face_path} from {width}x{height} to {new_width}x{new_height}")
 
-                    # 使用缩放后的图像进行人脸检测和嵌入提取
                     representations = DeepFace.represent(
-                        img_path=img,  # 直接传递 NumPy 数组
+                        img_path=img,
                         model_name=config['deepface']['model'],
+                        #detector_backend='yunet',
                         detector_backend=config['deepface']['detector'],
                         align=config['deepface']['alignment']
                     )
@@ -111,8 +111,12 @@ def extract_photos():
                             similarity = 1 - (score / 2)
                         logger.debug(f"Match index {i}, raw score {score:.4f}, similarity {similarity:.4f}")
                         if similarity >= face_conf:
-                            paths.add(paths_list[i])
-                            logger.debug(f"Add index {i} path: {paths_list[i]}")
+                            c.execute(f"SELECT photo_path FROM {config['database']['photo_table']} p "
+                                     f"JOIN {config['database']['face_table']} f ON p.id = f.photo_id "
+                                     f"WHERE f.embedding = (SELECT embedding FROM {config['database']['face_table']} LIMIT 1 OFFSET {i})")
+                            path = c.fetchone()[0]
+                            paths.add(path)
+                            logger.debug(f"Add path: {path}")
                     photo_paths.update(paths)
                     logger.info(f"Face {face_path}:")
                     for path in paths:
@@ -130,6 +134,10 @@ def extract_photos():
                 full_path = os.path.join(config['photo_dir'], path)
                 zipf.write(full_path, path)
         logger.info(f"Created zip file: {args.zip_file}")
+
+import os
+#os.environ["CUDA_VISIBLE_DEVICES"]=""
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # or any {'0', '1', '2'}
 
 if __name__ == "__main__":
     extract_photos()

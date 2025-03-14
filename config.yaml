@@ -2,9 +2,13 @@ photo_dir: "/mnt/d/tmp"
 temp_dir: "/tmp"
 parallel:
   workers: 8
+photo_purge: False
+sync_timeout: 120
+master_wait_for: 90
 
 database:
   file: "sqlite.db"
+  photo_table: "photo"
   face_table: "face"
   bib_table: "bib"
 
@@ -17,8 +21,6 @@ logging:
 
 deepface:
   detector: "mtcnn"
-    #detector: "retinaface" , "yolov8"
-    # opencv, ssd, dlib, mtcnn, fastmtcnn, retinaface, mediapipe, yolov8, yunet, centerface
   alignment: True
   model: "Facenet512"
   use_gpu: True

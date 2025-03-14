@@ -8,39 +8,36 @@ import multiprocessing.queues
 import traceback
 import psutil
 import time
+from datetime import datetime
 
-def worker_process(worker_id, photo_queue, result_queue, config, worker_status):
-    """Worker 进程：从照片队列读取照片，处理后放入结果队列"""
+def worker_process(worker_id, photo_queue, result_queue, config):
     logger = setup_logging(config, f"{config['logging']['scan_prefix']}_worker_{worker_id}")
     processor = ImageProcessor(config, logger)
     
-    # 更新状态为运行中
-    worker_status[worker_id] = 2
+    # 开始启动时，迟滞检测
     logger.info(f"Worker {worker_id} started")
     
     while True:
         try:
-            try:
-                photo_path = photo_queue.get(timeout=1)
-                if photo_path is None:  # 哨兵值，表示队列结束
-                    logger.info(f"Worker {worker_id} received sentinel value, exiting")
-                    break
-            except multiprocessing.queues.Empty:
-                logger.info(f"Worker {worker_id} found photo queue empty, exiting")
+            photo_path = photo_queue.get(timeout=1)
+            if photo_path is None:
+                logger.info(f"Worker {worker_id} received sentinel value, exiting")
                 break
+        except multiprocessing.queues.Empty:
+            logger.info(f"Worker {worker_id} found photo queue empty, exiting")
+            break
             
+        try:
             process = psutil.Process()
-            mem_before = process.memory_info().rss / 1024 / 1024  # MB
+            mem_before = process.memory_info().rss / 1024 / 1024
             logger.info(f"Worker {worker_id} memory usage before processing {photo_path}: {mem_before:.2f} MB")
             
-            # 读取图片
             img = cv2.imread(photo_path)
             if img is None:
                 logger.error(f"Worker {worker_id} failed to load image: {photo_path}")
-                result_queue.put((photo_path, [], []))
+                result_queue.put((photo_path, [], [], worker_id))
                 continue
             
-            # 检查并缩放图片
             height, width = img.shape[:2]
             if width > 2000:
                 scale = 2000 / width
@@ -49,112 +46,203 @@ def worker_process(worker_id, photo_queue, result_queue, config, worker_status):
                 img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
                 logger.debug(f"Worker {worker_id} resized {photo_path} from {width}x{height} to {new_width}x{new_height}")
             
-            img2 = img.copy()  # 缩放后的副本
+            img2 = img.copy()
             rel_path = os.path.relpath(photo_path, config['photo_dir'])
             face_embeddings = processor.process_faces(img, photo_path, logger)
             bibs = processor.process_bibs(img2, photo_path, logger)
             
-            mem_after = process.memory_info().rss / 1024 / 1024  # MB
+            mem_after = process.memory_info().rss / 1024 / 1024
             logger.info(f"Worker {worker_id} memory usage after processing {photo_path}: {mem_after:.2f} MB")
             
-            result_queue.put((rel_path, bibs, face_embeddings))
-        
+            result_queue.put((rel_path, bibs, face_embeddings, worker_id))
         except Exception as e:
             logger.error(f"Worker {worker_id} error for {photo_path}: {str(e)}\n{traceback.format_exc()}")
-            result_queue.put((photo_path, [], []))
+            result_queue.put((photo_path, [], [], worker_id))
+        logger.debug(f"Worker {worker_id}: Send status sync")
     
-    # 更新状态为结束
-    time.sleep(30)
-    worker_status[worker_id] = 0
     logger.info(f"Worker {worker_id} completed and exiting")
+
+def print_summary(config, db, total_photos, processed_count, incomplete_count):
+    # 从数据库读取总数
+    c = db.conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM {config['database']['face_table']}")
+    total_faces = c.fetchone()[0]
+    c.execute(f"SELECT COUNT(*) FROM {config['database']['bib_table']}")
+    total_bibs = c.fetchone()[0]
+    
+    print(f"Total photos: {total_photos}")
+    print(f"Total faces: {total_faces}")
+    print(f"Total bibs: {total_bibs}")
+    print(f"Total processed photos: {processed_count}")
+    print(f"Failed photos count: {incomplete_count}")
 
 def scan_photos():
     config = load_config()
     logger = setup_logging(config, config['logging']['scan_prefix'])
     db = Database(config, logger)
     
+    sync_timeout = config.get('sync_timeout', 60)  # 默认 60 秒
+    
     logger.info("Starting photo scan")
-    total_memory = psutil.virtual_memory().total / 1024 / 1024  # MB
+    total_memory = psutil.virtual_memory().total / 1024 / 1024
     logger.info(f"Total system memory: {total_memory:.2f} MB")
     
-    # 收集所有图片路径
-    photo_paths = []
+    # 读取所有照片文件的相对路径和时间戳
+    photo_info = {}
     for root, _, files in os.walk(config['photo_dir']):
         for file in files:
             if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                 photo_path = os.path.join(root, file)
-                photo_paths.append(photo_path)
+                rel_path = os.path.relpath(photo_path, config['photo_dir'])
+                timestamp = os.path.getmtime(photo_path)
+                photo_info[rel_path] = timestamp
     
-    total_photos = len(photo_paths)
+    total_photos = len(photo_info)
     logger.info(f"Found {total_photos} photos to process")
     
+    # 读取 Photo 表数据
+    db_photos = db.get_photo_info()
+    
+    # 处理 photo_purge
+    photo_purge = config.get('photo_purge', False)
+    if not photo_purge:
+        for db_path, (photo_id, _) in db_photos.items():
+            if db_path not in photo_info:
+                db.delete_photo_data(photo_id)
+                logger.info(f"Purged photo_id {photo_id} for path {db_path} not found in file system")
+    
+    # 检查并生成更新列表
+    update_list = []  # [(photo_id, rel_path)]
+    for rel_path, file_timestamp in photo_info.items():
+        if rel_path in db_photos:
+            photo_id, db_timestamp = db_photos[rel_path]
+            if db_timestamp >= file_timestamp:
+                logger.debug(f"Skipping {rel_path}: database timestamp {db_timestamp} >= file timestamp {file_timestamp}")
+                continue
+            else:
+                db.delete_by_photo_id(photo_id)
+                update_list.append((photo_id, rel_path))
+                logger.debug(f"Added {rel_path} to update list with photo_id {photo_id}")
+        else:
+            yesterday = file_timestamp - 24 * 3600
+            photo_id = db.add_photo(rel_path, yesterday)
+            update_list.append((photo_id, rel_path))
+            logger.debug(f"Added new photo {rel_path} with photo_id {photo_id}")
+    
+    logger.info(f"Photos to update: {len(update_list)}")
+    
+    if len(update_list) <= 0:
+        logger.info(f"Update list is empty")
+        print_summary(config, db, 0, 0, [])
+        return
+
     # 使用 Manager 创建队列和共享字典
     manager = Manager()
     photo_queue = manager.Queue()
     result_queue = manager.Queue()
-    worker_status = manager.dict()
     
-    # 将照片路径放入队列，并添加哨兵值
-    for photo_path in photo_paths:
-        photo_queue.put(photo_path)
+    for _, photo_path in update_list:
+        photo_queue.put(os.path.join(config['photo_dir'], photo_path))
     parallel_workers = config.get('parallel', {}).get('workers', 4)
     for _ in range(parallel_workers):
         photo_queue.put(None)
-    logger.info(f"Loaded {total_photos} photos into queue with {parallel_workers} sentinels")
+    logger.info(f"Loaded {len(update_list)} photos into queue with {parallel_workers} sentinels")
     
-    # 从配置中读取并行数
     available_cores = os.cpu_count()
     parallel_workers = min(parallel_workers, available_cores, total_photos or 1)
     logger.info(f"Starting {parallel_workers} worker processes (CPU cores: {available_cores}, images: {total_photos})")
     
-    # 启动 worker 进程并初始化状态
-    workers = []
+    worker_status = {}
+    workers = {}
     for i in range(parallel_workers):
-        worker_status[i] = 1  # 初始状态
-        p = Process(target=worker_process, args=(i, photo_queue, result_queue, config, worker_status))
+        p = Process(target=worker_process, args=(i, photo_queue, result_queue, config))
         p.start()
-        workers.append(p)
+        workers[i] = p
+        worker_status[i] = time.time() + config['master_wait_for']
     
-    # 主进程从结果队列读取数据并写入数据库
     processed_count = 0
-    incomplete_count = 0  # 连续未完成计数
+    incomplete_count = 0
+    empty_queue_time_stamp = None
+
     while True:
+        time.sleep(1)
+        active_workers = sum(1 for p in workers.values() if p.is_alive())
+        logger.debug(f"Active workers: {active_workers}, processed: {processed_count}, failed: {incomplete_count}, total: {len(update_list)}")
+        
+        current_time = time.time()
+        completed = False
+        # 新退出条件：处理数 + 失败数 = 更新总数
+        if photo_queue.qsize() <= 0:
+            if empty_queue_time_stamp is None:
+                empty_queue_time_stamp = time.time()
+            elif current_time - empty_queue_time_stamp > sync_timeout:
+                logger.info(f"Queue was empty over {sync_timeout} seconds.")
+                completed = True
+                
+
+        if processed_count + incomplete_count >= len(update_list):
+            logger.info(f"All photos accounted for: processed {processed_count}, incomplete {incomplete_count}, total {len(update_list)}")
+            completed = True
+        if completed:
+            time.sleep(5)
+            for worker_id, p in workers.items():
+                if p.is_alive():
+                    logger.info(f"Terminating worker {worker_id}")
+                    #p.terminate()
+                    p.kill()
+                    p.join()
+            break
+        
+        # 检查 worker 超时
+        for worker_id, last_updated in list(worker_status.items()):
+            if current_time - last_updated > sync_timeout:
+                last_update = datetime.fromtimestamp(last_updated).strftime('%c')
+                logger.warning(f"Worker {worker_id} timed out (last updated {last_update})")
+                workers[worker_id].kill()
+                #workers[worker_id].terminate()
+                workers[worker_id].join()
+                incomplete_count += 1
+                
+                # 重启 worker, 并迟滞状态检测
+                worker_status[worker_id] = time.time() + config['master_wait_for']
+                new_p = Process(target=worker_process, args=(worker_id, photo_queue, result_queue, config))
+                new_p.start()
+                workers[worker_id] = new_p
+                logger.info(f"Restarted worker {worker_id}")
+        
         try:
-            rel_path, bibs, face_embeddings = result_queue.get(timeout=5)
+            # 处理结果
+            rel_path, bibs, face_embeddings, worker_id = result_queue.get(timeout=1)
             processed_count += 1
-            logger.debug(f"Processed {processed_count}/{total_photos} photos")
+            logger.debug(f"Processed {processed_count}/{len(update_list)} photos")
+            
+            photo_id = next(pid for pid, path in update_list if path == rel_path)
+            logger.debug(f"Save data: worker: {worker_id}, photo({photo_id}): {rel_path}")
+            
             for bib, confidence in bibs:
-                db.add_bib(bib, rel_path, confidence)
-                logger.info(f"Added bib {bib} with confidence {confidence} for {rel_path}")
+                db.add_bib(bib, photo_id, confidence)
+                logger.info(f"Added bib {bib} with confidence {confidence} for photo_id {photo_id}")
             for embedding, confidence in face_embeddings:
-                db.add_face(embedding, rel_path, confidence)
-                logger.info(f"Added face with confidence {confidence} for {rel_path}")
-            incomplete_count = 0  # 重置计数器
+                db.add_face(embedding, photo_id, confidence)
+                logger.info(f"Added face with confidence {confidence} for photo_id {photo_id}")
+            
+            current_time = time.time()
+            c = db.conn.cursor()
+            c.execute(f"UPDATE {config['database']['photo_table']} SET last_updated = ? WHERE id = ?",
+                      (current_time, photo_id))
+            db.conn.commit()
+            logger.debug(f"Updated timestamp for photo_id {photo_id} to {current_time}")
+            worker_status[worker_id] = current_time
         
         except multiprocessing.queues.Empty:
-            # 检查所有 worker 状态
-            active_workers = sum(1 for status in worker_status.values() if status != 0)
-            logger.debug(f"Queue empty, active workers: {active_workers}, processed: {processed_count}/{total_photos}")
-            
-            if active_workers == 0:
-                if processed_count == total_photos:
-                    logger.info("All photos processed, exiting")
-                    break
-                else:
-                    incomplete_count += 1
-                    logger.warning(f"Incomplete processing: {processed_count}/{total_photos} photos, check {incomplete_count}/3")
-                    if incomplete_count >= 3:
-                        logger.error(f"Processing failed: only {processed_count}/{total_photos} photos completed after 3 checks")
-                        break
-                    time.sleep(30)  # 等待 30 秒再检查
-            else:
-                time.sleep(1)  # 有活跃 worker，继续等待
+            pass
     
-    # 确保所有 worker 进程已结束
-    for w in workers:
+    for w in workers.values():
         w.join()
     
+    # 输出结果
     logger.info("Photo scanning completed")
+    print_summary(config, db, total_photos, processed_count, incomplete_count)
 
 if __name__ == "__main__":
     try:
