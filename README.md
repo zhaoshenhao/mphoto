@@ -18,6 +18,6 @@ The initial idea came from the **2025 Chilly Half**. I participated in the race 
 2. [x] **Develop a backend retrieval tool** that allows users to search for photos based on a provided face image or bib number and package the results.  
 3. [ ] **Complete frontend development and testing.**  
 4. [ ] **Develop and test deployment scripts.**  
-5. [ ]**Deploy the system on AWS.**  
+5. [ ] **Deploy the system on AWS.**  
 
 
