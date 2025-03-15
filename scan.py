@@ -149,7 +149,7 @@ def scan_photos():
     logger.info(f"Loaded {len(update_list)} photos into queue with {parallel_workers} sentinels")
     
     available_cores = os.cpu_count()
-    parallel_workers = min(parallel_workers, available_cores, total_photos or 1)
+    parallel_workers = min(parallel_workers, available_cores, total_photos / 2 or 1)
     logger.info(f"Starting {parallel_workers} worker processes (CPU cores: {available_cores}, images: {total_photos})")
     
     worker_status = {}

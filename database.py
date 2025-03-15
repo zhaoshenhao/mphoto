@@ -79,7 +79,7 @@ class Database:
         if not embeddings:
             self.faiss_index = None
             self.logger.warning("No valid embeddings found in database")
-            return self.get_all_photo_paths()
+            return self.faiss_index
         
         dimension = len(embeddings[0])
         metric = self.config['search']['similarity_metric']
@@ -93,7 +93,7 @@ class Database:
 
         self.faiss_index.add(embeddings)
         self.logger.info(f"FAISS index built with dimension {dimension} and {len(embeddings)} embeddings")
-        return self.get_all_photo_paths()
+        return self.faiss_index
 
     def search_bib(self, bib, sub_bib=False, min_confidence=0.3):
         c = self.conn.cursor()
@@ -106,11 +106,6 @@ class Database:
         else:
             query += " AND b.bib = ?"
             c.execute(query, (min_confidence, bib))
-        return [row[0] for row in c.fetchall()]
-
-    def get_all_photo_paths(self):
-        c = self.conn.cursor()
-        c.execute(f"SELECT photo_path FROM {self.config['database']['photo_table']}")
         return [row[0] for row in c.fetchall()]
 
     def get_photo_info(self):

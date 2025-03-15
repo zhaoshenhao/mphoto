@@ -1,4 +1,4 @@
-photo_dir: "/mnt/d/tmp"
+photo_dir: "photos"
 temp_dir: "/tmp"
 parallel:
   workers: 8
@@ -39,6 +39,6 @@ ocr:
 
 search:
   face_match_confidence: 0.8
-  face_detect_confidence: 0.75
+  face_detect_confidence: 0.70
   similarity_metric: "cosine"
   bib_confidence: 0.75

@@ -39,7 +39,7 @@ def extract_photos():
             logger.debug(f"  {path}")
 
     if args.faces:
-        paths_list = db.build_faiss_index()
+        db.build_faiss_index()
         if db.faiss_index is None:
             logger.warning("No face data in database, skipping face search")
         else:
