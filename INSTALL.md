@@ -1,8 +1,17 @@
-# Resolve cuda conflict between torch and tensorflow
-1. torch has backward compatible.
-2. Install with requirements.txt first
-3. Then manually install tensorflow and ignore the conflict
+# INSTALL
+# It's pretty tricky:
+- Photo scaning requires GPU. We need to resolve the cuda conflict between torch, tensorflow.
+- We disable the GPU in photo extracting. We can ignore the conflict.
+
+# For photo scaning process:
 ```bash
 pip install -r requirements.txt
-pip install torch=2.6.0 torchvision==0.21.0
 pip install 'tensorflow[and-cuda]'
+```
+
+# For web application:
+```bash
+pip install -r requirements.txt
+pip install -r web/backend/requirements.txt
+```
+

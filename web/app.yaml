@@ -1,0 +1,9 @@
+db:
+  path: "app.db"
+storage:
+  base_url: "http://localhost:8000/file/"
+  base_path: "data/"
+  raw_path: "raw/"
+  thums_path: "thumb/"
+  max_zip_size: 1073741824  # 单个 Zip 文件的最大大小，1GB
+  max_total_download_size: 2147483648  # 总下载限制，2GB

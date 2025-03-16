@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MPhoto</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css">
+</head>
+<body>
+    <div class="container">
+        <h1>MPhoto</h1>
+        <div class="tabs">
+            <button onclick="showTab(0)" id="tab0">Code Input</button>
+            <button onclick="showTab(1)" id="tab1" disabled>Face Input</button>
+            <button onclick="showTab(2)" id="tab2" disabled>Thumbnails</button>
+        </div>
+
+        <!-- Tab 1: Code Input -->
+        <div class="tab-content" id="tab-content-0">
+            <input type="text" id="invite-code" maxlength="10" placeholder="Enter 10-digit invite code">
+            <button onclick="submitCode()">Submit</button>
+            <div id="bib-info"></div>
+        </div>
+
+        <!-- Tab 2: Face Input -->
+        <div class="tab-content" id="tab-content-1" style="display: none;">
+            <p id="bib-display"></p>
+            <button onclick="submitFaces()" id="submit-faces">Submit</button>
+            <div class="face-previews">
+                <div class="face-unit">
+                    <div class="face-box" id="face-0"><div class="diagonal"></div></div>
+                    <div class="face-controls">
+                        <button class="copy-btn" id="copy-0" title="Copy the selected face" disabled>Copy</button>
+                        <label><input type="checkbox" id="use-0" title="Use it to search photo" disabled> Use</label>
+                    </div>
+                </div>
+                <div class="face-unit">
+                    <div class="face-box" id="face-1"><div class="diagonal"></div></div>
+                    <div class="face-controls">
+                        <button class="copy-btn" id="copy-1" title="Copy the selected face" disabled>Copy</button>
+                        <label><input type="checkbox" id="use-1" title="Use it to search photo" disabled> Use</label>
+                    </div>
+                </div>
+                <div class="face-unit">
+                    <div class="face-box" id="face-2"><div class="diagonal"></div></div>
+                    <div class="face-controls">
+                        <button class="copy-btn" id="copy-2" title="Copy the selected face" disabled>Copy</button>
+                        <label><input type="checkbox" id="use-2" title="Use it to search photo" disabled> Use</label>
+                    </div>
+                </div>
+            </div>
+            <div class="crop-area">
+                <input type="file" id="image-input" accept="image/*" onchange="loadImage()">
+                <img id="crop-image" style="display: none;">
+            </div>
+        </div>
+
+        <!-- Tab 3: Thumbnails -->
+        <div class="tab-content" id="tab-content-2" style="display: none;">
+            <div id="thumbs-grid" class="thumbs-grid"></div>
+            <div class="controls">
+                <button onclick="selectAll()">All</button>
+                <button onclick="selectNone()">None</button>
+                <button onclick="selectInverse()">Inverse</button>
+                <button onclick="download()">Download</button>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.js"></script>
+    <script src="/static/script.js"></script>
+</body>
+</html>

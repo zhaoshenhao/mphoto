@@ -16,7 +16,7 @@ The initial idea came from the **2025 Chilly Half**. I participated in the race 
 ### **Project Plan:**  
 1. [x] **Develop a backend photo scanning and indexing tool** to scan the photo library, detect faces and bib numbers, and store the data in a database.  
 2. [x] **Develop a backend retrieval tool** that allows users to search for photos based on a provided face image or bib number and package the results.  
-3. [ ] **Complete frontend development and testing.**  
+3. [ ] **Complete web frontend and backend development and testing.**
 4. [ ] **Develop and test deployment scripts.**  
 5. [ ] **Deploy the system on AWS.**  
 
