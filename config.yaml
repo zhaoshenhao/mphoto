@@ -7,16 +7,26 @@ sync_timeout: 120
 master_wait_for: 90
 
 database:
-  file: "sqlite.db"
-  photo_table: "photo"
-  face_table: "face"
-  bib_table: "bib"
+host: localhost
+  port: 5432
+  name: mphoto
+  user: postgres
+  password: your_password
+  table_event: event
+  table_bib: bib
+  table_download_history: download_history
+  table_photo: photo
+  table_bib_photo: bib_photo
+  table_face_photo: face_photo
 
 logging:
-  level: "DEBUG"
+  level: DEBUG
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: mphoto.log
   dir: "logs"
   scan_prefix: "scan"
   get_prefix: "get"
+  web_prefix: "mphoto"
   screen_print: True
 
 deepface:

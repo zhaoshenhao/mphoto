@@ -1,129 +1,135 @@
-import sqlite3
+# database.py
+import psycopg2
 import numpy as np
-import faiss
-import logging
+from psycopg2.extras import RealDictCursor
+from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, TABLES, logger, config
+
+# Default search limit from config.yaml
+DEFAULT_SEARCH_LIMIT = config.get("database", {}).get("default_search_limit", 100)
 
 class Database:
-    def __init__(self, config, logger=None):
-        self.config = config
-        self.conn = sqlite3.connect(config['database']['file'])
-        self.faiss_index = None
-        self.logger = logger or logging.getLogger(__name__)
-        self.setup_tables()
+    def __init__(self):
+        self.conn = psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD,
+            cursor_factory=RealDictCursor
+        )
+        self.cursor = self.conn.cursor()
 
-    def setup_tables(self):
-        c = self.conn.cursor()
-        # Photo 表
-        c.execute(f'''CREATE TABLE IF NOT EXISTS {self.config['database']['photo_table']}
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      photo_path TEXT UNIQUE,
-                      last_updated REAL)''')
-        # Face 表
-        c.execute(f'''CREATE TABLE IF NOT EXISTS {self.config['database']['face_table']}
-                     (embedding BLOB,
-                      photo_id INTEGER,
-                      confidence REAL,
-                      FOREIGN KEY (photo_id) REFERENCES {self.config['database']['photo_table']}(id))''')
-        # Bib 表
-        c.execute(f'''CREATE TABLE IF NOT EXISTS {self.config['database']['bib_table']}
-                     (bib TEXT,
-                      photo_id INTEGER,
-                      confidence REAL,
-                      FOREIGN KEY (photo_id) REFERENCES {self.config['database']['photo_table']}(id))''')
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.conn.commit()
+        self.cursor.close()
+        self.conn.close()
 
-    def add_photo(self, photo_path, timestamp):
-        c = self.conn.cursor()
-        c.execute(f"INSERT OR REPLACE INTO {self.config['database']['photo_table']} (photo_path, last_updated) VALUES (?, ?)",
-                  (photo_path, timestamp))
-        self.conn.commit()
-        c.execute(f"SELECT id FROM {self.config['database']['photo_table']} WHERE photo_path = ?", (photo_path,))
-        return c.fetchone()[0]
+    # Insert an event
+    def insert_event(self, name, enabled, expiry):
+        query = f"INSERT INTO {TABLES['event']} (name, enabled, expiry) VALUES (%s, %s, %s) RETURNING id"
+        self.cursor.execute(query, (name, enabled, expiry))
+        return self.cursor.fetchone()["id"]
 
-    def add_face(self, embedding, photo_id, confidence):
-        c = self.conn.cursor()
-        embedding = np.array(embedding, dtype=np.float32).flatten()
-        expected_dim = self.config.get('deepface', {}).get('embedding_dim', 512)
-        if len(embedding) != expected_dim:
-            self.logger.error(f"Embedding dimension mismatch for photo_id {photo_id}: expected {expected_dim}, got {len(embedding)}")
-            raise ValueError(f"Invalid embedding dimension")
-        self.logger.debug(f"Adding embedding for photo_id {photo_id} with dimension {len(embedding)}")
-        c.execute(f"INSERT INTO {self.config['database']['face_table']} (embedding, photo_id, confidence) VALUES (?, ?, ?)",
-                  (embedding.tobytes(), photo_id, confidence))
-        self.conn.commit()
+    # Insert a bib
+    def insert_bib(self, event_id, bib_number, enabled, expiry, name=None):
+        query = f"INSERT INTO {TABLES['bib']} (event_id, bib_number, enabled, expiry, name) VALUES (%s, %s, %s, %s, %s) RETURNING id"
+        self.cursor.execute(query, (event_id, bib_number, enabled, expiry, name))
+        return self.cursor.fetchone()["id"]
 
-    def add_bib(self, bib, photo_id, confidence):
-        c = self.conn.cursor()
-        c.execute(f"INSERT INTO {self.config['database']['bib_table']} (bib, photo_id, confidence) VALUES (?, ?, ?)",
-                  (bib, photo_id, confidence))
-        self.conn.commit()
+    # Insert a photo
+    def insert_photo(self, event_id, photo_path):
+        query = f"INSERT INTO {TABLES['photo']} (event_id, photo_path) VALUES (%s, %s) RETURNING id"
+        self.cursor.execute(query, (event_id, photo_path))
+        return self.cursor.fetchone()["id"]
 
-    def build_faiss_index(self):
-        c = self.conn.cursor()
-        c.execute(f"SELECT embedding, photo_id FROM {self.config['database']['face_table']}")
-        rows = c.fetchall()
-        
-        embeddings = []
-        photo_ids = []
-        expected_dimension = self.config.get('deepface', {}).get('embedding_dim', 512)
-        
-        for emb, photo_id in rows:
-            embedding = [float(x) for x in np.frombuffer(emb, dtype=np.float32)]
-            if len(embedding) != expected_dimension:
-                self.logger.warning(f"Skipping embedding for photo_id {photo_id} with inconsistent dimension "
-                                   f"(expected {expected_dimension}, got {len(embedding)})")
-                continue
-            embeddings.append(embedding)
-            photo_ids.append(photo_id)
-        
-        if not embeddings:
-            self.faiss_index = None
-            self.logger.warning("No valid embeddings found in database")
-            return self.faiss_index
-        
-        dimension = len(embeddings[0])
-        metric = self.config['search']['similarity_metric']
+    # Insert a bib-photo relationship
+    def insert_bib_photo(self, event_id, bib_id, photo_id):
+        query = f"INSERT INTO {TABLES['bib_photo']} (event_id, bib_id, photo_id) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING"
+        self.cursor.execute(query, (event_id, bib_id, photo_id))
 
-        if metric == 'cosine':
-            self.faiss_index = faiss.index_factory(dimension, "Flat", faiss.METRIC_INNER_PRODUCT)
-            embeddings = np.array(embeddings, dtype=np.float32)
-            faiss.normalize_L2(embeddings)
-        else:  # 默认 L2
-            self.faiss_index = faiss.index_factory(dimension, "Flat", faiss.METRIC_L2)
+    # Insert a face-photo record
+    def insert_face_photo(self, event_id, photo_id, embedding, confidence):
+        query = f"INSERT INTO {TABLES['face_photo']} (event_id, photo_id, embedding, confidence) VALUES (%s, %s, %s, %s)"
+        self.cursor.execute(query, (event_id, photo_id, embedding.tolist(), confidence))
 
-        self.faiss_index.add(embeddings)
-        self.logger.info(f"FAISS index built with dimension {dimension} and {len(embeddings)} embeddings")
-        return self.faiss_index
+    # Search for similar faces
+    def search_similar_faces(self, embedding, event_id, min_confidence, min_similarity, limit=DEFAULT_SEARCH_LIMIT):
+        """
+        Search for similar faces based on embedding, sorted by similarity DESC
+        :param embedding: Face embedding vector
+        :param event_id: Event ID to filter by
+        :param min_confidence: Minimum confidence threshold
+        :param min_similarity: Minimum cosine similarity (1 - distance)
+        :param limit: Maximum number of records to return
+        :return: List of dicts with event_id, photo_id, confidence, similarity
+        """
+        max_distance = 1 - min_similarity
+        query = f"""
+            SELECT 
+                fp.event_id,
+                fp.photo_id,
+                fp.confidence,
+                (1 - (fp.embedding <=> %s)) AS similarity
+            FROM {TABLES['face_photo']} fp
+            JOIN {TABLES['photo']} p ON fp.photo_id = p.id
+            WHERE fp.event_id = %s
+            AND fp.confidence >= %s
+            AND (fp.embedding <=> %s) <= %s
+            ORDER BY similarity DESC
+            LIMIT %s
+        """
+        self.cursor.execute(query, (embedding.tolist(), event_id, min_confidence, embedding.tolist(), max_distance, limit))
+        return self.cursor.fetchall()
 
-    def search_bib(self, bib, sub_bib=False, min_confidence=0.3):
-        c = self.conn.cursor()
-        query = (f"SELECT p.photo_path FROM {self.config['database']['bib_table']} b "
-                 f"JOIN {self.config['database']['photo_table']} p ON b.photo_id = p.id "
-                 f"WHERE b.confidence >= ?")
-        if sub_bib:
-            query += " AND b.bib LIKE ?"
-            c.execute(query, (min_confidence, f"%{bib}%"))
-        else:
-            query += " AND b.bib = ?"
-            c.execute(query, (min_confidence, bib))
-        return [row[0] for row in c.fetchall()]
+    # Search photos by bib with confidence filter
+    def search_photos_by_bib(self, event_id, bib_id, min_confidence):
+        """
+        Search photos associated with a specific bib, filtered by minimum confidence
+        :param event_id: Event ID to filter by
+        :param bib_id: Bib ID to search for
+        :param min_confidence: Minimum confidence threshold from face_photo table
+        :return: List of dicts with event_id, bib_id, photo_path
+        """
+        query = f"""
+            SELECT 
+                bp.event_id,
+                bp.bib_id,
+                p.photo_path
+            FROM {TABLES['bib_photo']} bp
+            JOIN {TABLES['photo']} p ON bp.photo_id = p.id
+            JOIN {TABLES['face_photo']} fp ON bp.photo_id = fp.photo_id
+            WHERE bp.event_id = %s
+            AND bp.bib_id = %s
+            AND fp.confidence >= %s
+        """
+        self.cursor.execute(query, (event_id, bib_id, min_confidence))
+        return self.cursor.fetchall()
 
-    def get_photo_info(self):
-        c = self.conn.cursor()
-        c.execute(f"SELECT id, photo_path, last_updated FROM {self.config['database']['photo_table']}")
-        return {row[1]: (row[0], row[2]) for row in c.fetchall()}  # {path: (id, timestamp)}
+    # Delete references to a photo in bib_photo and face_photo
+    def delete_photo_ref(self, photo_id):
+        """
+        Delete all rows in bib_photo and face_photo for the given photo_id
+        :param photo_id: ID of the photo whose references should be deleted
+        """
+        self.cursor.execute(f"DELETE FROM {TABLES['bib_photo']} WHERE photo_id = %s", (photo_id,))
+        self.cursor.execute(f"DELETE FROM {TABLES['face_photo']} WHERE photo_id = %s", (photo_id,))
 
-    def delete_photo_data(self, photo_id):
-        c = self.conn.cursor()
-        c.execute(f"DELETE FROM {self.config['database']['face_table']} WHERE photo_id = ?", (photo_id,))
-        c.execute(f"DELETE FROM {self.config['database']['bib_table']} WHERE photo_id = ?", (photo_id,))
-        c.execute(f"DELETE FROM {self.config['database']['photo_table']} WHERE id = ?", (photo_id,))
-        self.conn.commit()
-        self.logger.debug(f"Deleted data for photo_id {photo_id}")
+    # Delete a photo and its references
+    def delete_photo(self, photo_id):
+        """
+        Delete the photo row and all related rows in bib_photo and face_photo
+        :param photo_id: ID of the photo to delete
+        """
+        self.cursor.execute(f"DELETE FROM {TABLES['bib_photo']} WHERE photo_id = %s", (photo_id,))
+        self.cursor.execute(f"DELETE FROM {TABLES['face_photo']} WHERE photo_id = %s", (photo_id,))
+        self.cursor.execute(f"DELETE FROM {TABLES['photo']} WHERE id = %s", (photo_id,))
 
-    def delete_by_photo_id(self, photo_id):
-        c = self.conn.cursor()
-        c.execute(f"DELETE FROM {self.config['database']['face_table']} WHERE photo_id = ?", (photo_id,))
-        c.execute(f"DELETE FROM {self.config['database']['bib_table']} WHERE photo_id = ?", (photo_id,))
-        self.conn.commit()
-        self.logger.debug(f"Deleted face and bib data for photo_id {photo_id}")
+    # Get photo paths for a bib
+    def get_bib_photos(self, bib_id):
+        query = f"""
+            SELECT p.photo_path
+            FROM {TABLES['bib_photo']} bp
+            JOIN {TABLES['photo']} p ON bp.photo_id = p.id
+            WHERE bp.bib_id = %s
+        """
+        self.cursor.execute(query, (bib_id,))
+        return [row["photo_path"] for row in self.cursor.fetchall()]
