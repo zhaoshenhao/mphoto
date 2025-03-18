@@ -9,6 +9,9 @@ The initial idea came from the **2025 Chilly Half**. I participated in the race 
 1. **DeepFace** for face detection and embedding.  
 2. **PaddleOCR** for bib number recognition.  
 3. **Python + Web Framework + JavaScript** for frontend development.  
+    a. **FAST API** for frontend development.
+    b. Postgresql + pgvector for RDBMS and VectorDB
+    c. Async IO
 4. **AWS deployment** with **S3 as the photo storage**.  
 
 ---
