@@ -1,33 +1,39 @@
-photo_dir: "photos"
+photo_dir: "data"
 temp_dir: "/tmp"
 parallel:
-  workers: 8
+  workers: 1
 photo_purge: False
 sync_timeout: 120
 master_wait_for: 90
 
 database:
-host: localhost
+  host: localhost
   port: 5432
-  name: mphoto
-  user: postgres
-  password: your_password
-  table_event: event
-  table_bib: bib
-  table_download_history: download_history
-  table_photo: photo
-  table_bib_photo: bib_photo
-  table_face_photo: face_photo
+  username: mphoto_user
+  password: mphoto
+  database: mphoto_db
+  default_search_limit: 100
+
+table_names:
+  event: event
+  bib: bib
+  download_history: download_history
+  photo: photo
+  bib_photo: bib_photo
+  face_photo: face_photo
+
+web:
+  port: 8080
+  host: 0.0.0.0
 
 logging:
-  level: DEBUG
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: mphoto.log
+  level: "DEBUG"
   dir: "logs"
   scan_prefix: "scan"
-  get_prefix: "get"
-  web_prefix: "mphoto"
+  get_prefix: "search"
+  web_prefix: "web"
   screen_print: True
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 deepface:
   detector: "mtcnn"
@@ -38,6 +44,7 @@ deepface:
   expand_percentage: 5
   debug_dir: "face_debug"
   detect_confidence: 0.3
+  embedding_dim: 512
 
 ocr:
   use_gpu: True
@@ -48,7 +55,6 @@ ocr:
   confidence: 0.3
 
 search:
-  face_match_confidence: 0.8
+  face_similarity: 0.8
   face_detect_confidence: 0.70
-  similarity_metric: "cosine"
   bib_confidence: 0.75

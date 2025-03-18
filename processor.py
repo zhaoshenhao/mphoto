@@ -5,9 +5,9 @@ import os
 import numpy as np
 import tensorflow as tf
 import paddle
-from utils import load_config
 from datetime import datetime
 import traceback
+from config import config
 
 class ImageProcessor:
     def __init__(self, config, logger):

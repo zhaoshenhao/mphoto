@@ -2,12 +2,9 @@ import yaml
 import logging
 from datetime import datetime
 import os
+from config import config
 
-def load_config(config_path="config.yaml"):
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-def setup_logging(config, prefix):
+def setup_logging(prefix):
     # 创建日志目录
     log_dir = config['logging']['dir']
     os.makedirs(log_dir, exist_ok=True)
@@ -44,3 +41,8 @@ def setup_logging(config, prefix):
         logger.addHandler(console_handler)
     
     return logger
+
+def get_event_dir(event_id, sub_dir):
+    p = os.path.join(config['photo_dir'], event_id)
+    return os.path.join(p, sub_dir)
+

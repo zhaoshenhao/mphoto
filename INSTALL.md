@@ -34,9 +34,8 @@ sudo apt install -y postgresql-17 postgresql-17-pgvector
 ## Login to psql cli
 sudo -u postgres psql
 
-## Create the extention
-
-CREATE EXTENSION vector;
+## Create the extention, see db.sql for better setup
+psql -h localhost -U postgres -c "CREATE EXTENSION vector;"
 
 ## Verify
 sudo -u postgres psql
