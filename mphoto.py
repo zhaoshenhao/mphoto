@@ -6,6 +6,7 @@ import cv2
 import logging
 import faiss
 import traceback
+import asyncio
 from typing import List, Optional
 from config import config
 from utils import setup_logging, get_event_dir
@@ -36,8 +37,6 @@ def get_face_representation(img, logger, detect_conf, expected_dim):
         img_path=img,
         model_name=config['deepface']['model'],
         detector_backend=config['deepface']['detector'],
-        #detector_backend='yunet',
-        #detector_backend='retinaface',
         align=config['deepface']['alignment']
     )
     if not representations:
@@ -49,7 +48,6 @@ def get_face_representation(img, logger, detect_conf, expected_dim):
         confidence = rep.get('face_confidence', 0.0)
         if confidence >= detect_conf:
             embedding = np.array(rep["embedding"])
-            #embedding = np.array(rep["embedding"], dtype=np.float32).flatten()
             break
 
     if embedding is None:
@@ -63,7 +61,7 @@ def get_face_representation(img, logger, detect_conf, expected_dim):
     logger.debug(f"Input embedding dimension: {embedding.shape}")
     return embedding
 
-def zip_photos(zipfile, event_id, photo_paths):
+def zip_photos(zip_file, event_id, photo_paths):  # Fixed parameter name
     work_dir = get_event_dir(event_id, 'raw')
     with zipfile.ZipFile(zip_file, 'w') as zipf:
         for path in photo_paths:
@@ -71,7 +69,7 @@ def zip_photos(zipfile, event_id, photo_paths):
             zipf.write(full_path, path)
     logger.info(f"Created zip file: {zip_file}")
 
-def extract_photos_core(
+async def extract_photos_core(
     logger: logging.Logger = None,
     db: Database = None,
     event_id: int = None,
@@ -82,23 +80,6 @@ def extract_photos_core(
     sub_bib: bool = False,
     bib_confidence: Optional[float] = None
 ) -> List[str]:
-    """
-    核心提取照片逻辑，支持 bib 和人脸搜索，返回匹配的照片路径列表。
-
-    Args:
-        event_id: event ID
-        bib: Bib number, optional
-        faces: face image or cv2 image, optional
-        face_similarity: face match minimal similarity, optional
-        face_detect_confidence: face detect minial similarity, optional
-        sub_bib: Sub string search, optional
-        bib_confidence: Bib ocr minimal confidence, optional
-        logger: logger instance
-        db: db instance
-
-    Returns:
-        List[str]: Photo path list
-    """
     face_conf = face_similarity or config['search']['face_similarity']
     detect_conf = face_detect_confidence or config['search']['face_detect_confidence']
     bib_conf = bib_confidence or config['search']['bib_confidence']
@@ -109,18 +90,15 @@ def extract_photos_core(
 
     photo_paths = set()
 
-    # Bib 搜索
     if bib:
-        paths = db.search_bib_photo(event_id, bib, sub_bib, bib_conf)
+        paths = await db.search_bib_photo(event_id, bib, sub_bib, bib_conf)
         photo_paths.update(paths)
         logger.debug(f"Bib {bib}:")
         for path in paths:
             logger.debug(f"  {path}")
 
-    # 人脸搜索
     if faces:
         expected_dim = config['deepface']['embedding_dim']
-        c = db.conn.cursor()
         for face_path_or_img in faces:
             try:
                 img = prepare_image(face_path_or_img, logger)
@@ -129,20 +107,18 @@ def extract_photos_core(
                     continue
 
                 embedding = get_face_representation(img, logger, detect_conf, expected_dim)
-
                 if embedding is None:
                     continue
 
                 logger.debug(f"Input embedding dimension: {embedding.shape}")
-
-                paths = db.search_face_photo(event_id, embedding, detect_conf, face_conf)
+                paths = await db.search_face_photo(event_id, embedding, detect_conf, face_conf)
                 logger.debug(f"Face search return {len(paths)} rows")
-                if (len(paths) == DEFAULT_SEARCH_LIMIT):
+                if len(paths) == DEFAULT_SEARCH_LIMIT:
                     logger.debug(f"It reaches the search limit {DEFAULT_SEARCH_LIMIT}")
                 
                 p2 = set()
-                for p in paths:
-                    logger.info(f"  {p}")
+                for p, s, c in paths:  # Unpack tuple (photo_path, similarity, confidence)
+                    logger.info(f"  {p},{s},{c}")
                     p2.add(p)
                 photo_paths.update(p2)
             except Exception as e:
@@ -151,32 +127,18 @@ def extract_photos_core(
     logger.info(f"Total unique photos: {len(photo_paths)}")
     return list(photo_paths)
 
-def extract(bib: str, images: List[np.ndarray], config_path: str ='config.yaml') -> List[np.ndarray]:
-    """
-    FastAPI 调用的提取函数，接收 bib 和图像数组，返回匹配的照片图像数组。
-    首次调用时初始化全局状态，后续调用直接使用内存中的资源。
-
-    Args:
-        bib: Bib 号码
-        images: cv2 格式的图像数组
-
-    Returns:
-        List[np.ndarray]: 匹配的照片图像列表
-    """
-
-    # 调用核心逻辑，使用全局状态
-    return extract_photos_core(
+def extract(event_id: int, bib: str, images: List[np.ndarray], logger: logging.Logger = None, db: Database = None) -> List[str]:
+    return asyncio.run(extract_photos_core(
         bib=bib,
         faces=images,
-        logger=extractor_state.logger,
-        db=extractor_state.db,
-        faiss_index=extractor_state.faiss_index
-    )
+        logger=logger,
+        db=db,
+        event_id=event_id
+    ))
 
 def main():
-    """命令行入口"""
     parser = argparse.ArgumentParser(description="Extract photos by bib or face images")
-    parser.add_argument("-e", "--event-id", help="Bib number to search")
+    parser.add_argument("-e", "--event-id", type=int, help="Event ID to search", required=True)
     parser.add_argument("-b", "--bib", help="Bib number to search")
     parser.add_argument("-f", "--faces", nargs='+', help="Face image paths")
     parser.add_argument("-fm", "--face-similarity", type=float, help="Face similarity threshold")
@@ -188,8 +150,7 @@ def main():
 
     logger = setup_logging(config['logging']['get_prefix'])
     db = Database(logger)
-    # 调用核心逻辑（命令行模式不使用全局状态）
-    photo_paths = extract_photos_core(
+    photo_paths = asyncio.run(extract_photos_core(
         bib=args.bib,
         faces=args.faces,
         face_similarity=args.face_similarity,
@@ -199,18 +160,17 @@ def main():
         db=db,
         logger=logger,
         event_id=args.event_id,
-    )
+    ))
 
-    # 命令行输出路径
     photo_paths.sort()
     for p in photo_paths:
         print(p)
 
     if args.zip_file:
-        zip_photos(args.zipfile, event_id, photo_paths)
-# 设置环境变量
-os.environ["CUDA_VISIBLE_DEVICES"]=""
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 抑制 TensorFlow 日志
+        zip_photos(args.zip_file, args.event_id, photo_paths)  # Fixed argument name
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 if __name__ == "__main__":
     main()

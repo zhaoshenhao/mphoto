@@ -5,6 +5,7 @@ import multiprocessing.queues
 import traceback
 import psutil
 import time
+import asyncio
 from multiprocessing import Process, Manager, set_start_method
 from utils import setup_logging, get_event_dir
 from datetime import datetime
@@ -15,6 +16,8 @@ def worker_process(worker_id, photo_queue, result_queue, config, work_dir):
     logger = setup_logging(f"{config['logging']['scan_prefix']}_worker_{worker_id}")
     from processor import ImageProcessor
     processor = ImageProcessor(config, logger)
+    db = Database(logger)
+    asyncio.run(db._ensure_pool())  # Initialize pool in each process
     logger.info(f"Worker {worker_id} started")
     
     while True:
@@ -76,8 +79,7 @@ class Scaner:
         self.image_ext = ('.png', '.jpg', '.jpeg')
         self.update_list = []
 
-    def print_summary(self):
-        total_bibs, total_bib_photos, total_faces = self.db.get_event_count(self.event_id)
+    def print_summary(self, total_bibs, total_bib_photos, total_faces):
         print(f"Total bibs: {total_bibs}")
         print(f"Total photos: {self.total_photos}")
         print(f"Total faces: {total_faces}")
@@ -99,20 +101,16 @@ class Scaner:
         self.total_photos = len(self.photo_info)
         self.logger.info(f"Found {self.total_photos} photos to process")
 
-    def get_update_list(self):
-        # Get all photos from event raw folder with timestamp
+    async def get_update_list_async(self):
         self.get_photo_list()
-        # Get all phots in photo table for event
-        db_photos = self.db.get_event_photo_info(self.event_id)
-        # photo purge
+        db_photos = await self.db.get_event_photo_info(self.event_id)
         photo_purge = config.get('photo_purge', False)
         if not photo_purge:
             for db_path, (photo_id, _) in db_photos.items():
                 if db_path not in self.photo_info:
-                    self.db.delete_photo(photo_id)
+                    await self.db.delete_photo(photo_id)
                     self.logger.info(f"Purged photo_id {photo_id} for path {db_path} not found in file system")
 
-        # Create the update list
         for rel_path, file_timestamp in self.photo_info.items():
             if rel_path in db_photos:
                 photo_id, db_timestamp = db_photos[rel_path]
@@ -120,30 +118,29 @@ class Scaner:
                     self.logger.debug(f"Skipping {rel_path}: database timestamp {db_timestamp} >= file timestamp {file_timestamp}")
                     continue
                 else:
-                    self.db.delete_photo_ref(photo_id)
+                    await self.db.delete_photo_ref(photo_id)
                     self.update_list.append((photo_id, rel_path))
                     self.logger.debug(f"Added {rel_path} to update list with photo_id {photo_id}")
             else:
                 yesterday = datetime.fromtimestamp(file_timestamp - 24 * 3600)
-                photo_id = self.db.add_photo(self.event_id, rel_path, yesterday)
+                photo_id = await self.db.add_photo(self.event_id, rel_path, yesterday)
                 self.update_list.append((photo_id, rel_path))
                 self.logger.debug(f"Added new photo {rel_path} with photo_id {photo_id}")
 
-        self.db.conn.commit()
         self.logger.info(f"Photos to update: {len(self.update_list)}")
 
-    def scan(self):
+    async def scan_async(self):
         self.logger.info(f"Starting photo scan for event: {self.event_id}")
         total_memory = psutil.virtual_memory().total / 1024 / 1024
         self.logger.info(f"Total system memory: {total_memory:.2f} MB")
-        self.get_update_list()
+        await self.get_update_list_async()
     
         if len(self.update_list) <= 0:
             self.logger.info(f"Update list is empty")
-            self.print_summary()
+            total_bibs, total_bib_photos, total_faces = await self.db.get_event_count(self.event_id)
+            self.print_summary(total_bibs, total_bib_photos, total_faces)
             return
 
-        # 使用 Manager 创建队列和共享字典
         manager = Manager()
         photo_queue = manager.Queue()
         result_queue = manager.Queue()
@@ -170,7 +167,7 @@ class Scaner:
         empty_queue_time_stamp = None
 
         while True:
-            time.sleep(1)
+            await asyncio.sleep(1)  # Async sleep
             active_workers = sum(1 for p in workers.values() if p.is_alive())
             self.logger.debug(f"Active workers: {active_workers}, processed: {self.processed_count}, failed: {self.incomplete_count}, total: {len(self.update_list)}")
         
@@ -186,33 +183,28 @@ class Scaner:
                 self.logger.info(f"All photos accounted for: processed {self.processed_count}, incomplete {self.incomplete_count}, total {len(self.update_list)}")
                 completed = True
             if completed:
-                time.sleep(5)
+                await asyncio.sleep(5)  # Async sleep
                 for worker_id, p in workers.items():
                     if p.is_alive():
                         self.logger.info(f"Terminating worker {worker_id}")
-                        #p.terminate()
                         p.kill()
                         p.join()
                 break
 
-            # Check worker timeout
             for worker_id, last_updated in list(worker_status.items()):
                 if current_time - last_updated > self.sync_timeout:
                     last_update = datetime.fromtimestamp(last_updated).strftime('%c')
-                    self.logger.warning(f"Worker {worker_id} timed out (last updated {self.last_update})")
+                    self.logger.warning(f"Worker {worker_id} timed out (last updated {last_update})")  # Fixed typo
                     workers[worker_id].kill()
-                    #workers[worker_id].terminate()
                     workers[worker_id].join()
                     self.incomplete_count += 1
                 
-                    # Restart worker and delay the staus check
                     worker_status[worker_id] = time.time() + config['master_wait_for']
-                    new_p = Process(target=worker_process, args=(worker_id, photo_queue, result_queue, config))
+                    new_p = Process(target=worker_process, args=(worker_id, photo_queue, result_queue, config, self.work_dir))  # Fixed args
                     new_p.start()
                     workers[worker_id] = new_p
                     self.logger.info(f"Restarted worker {worker_id}")
         
-            # Handle the return
             try:
                 rel_path, bibs, face_embeddings, worker_id = result_queue.get(timeout=1)
                 self.processed_count += 1
@@ -222,13 +214,12 @@ class Scaner:
                 self.logger.debug(f"Save data: worker: {worker_id}, photo({photo_id}): {rel_path}")
             
                 for bib, confidence in bibs:
-                    self.db.add_bib_photo(self.event_id, bib, photo_id, confidence)
+                    await self.db.add_bib_photo(self.event_id, bib, photo_id, confidence)
                     self.logger.info(f"Added bib {bib} with confidence {confidence} for photo_id {photo_id}")
                 for embedding, confidence in face_embeddings:
-                    self.db.add_face_photo(self.event_id, photo_id, embedding, confidence)
+                    await self.db.add_face_photo(self.event_id, photo_id, embedding, confidence)
                     self.logger.info(f"Added face with confidence {confidence} for photo_id {photo_id}")
-                self.db.update_photo(photo_id, datetime.now())
-                self.db.conn.commit()
+                await self.db.update_photo(photo_id, datetime.now())
                 self.logger.debug(f"Updated timestamp for photo_id {photo_id} to {current_time}")
                 worker_status[worker_id] = current_time
         
@@ -238,13 +229,16 @@ class Scaner:
         for w in workers.values():
             w.join()
     
-        # 输出结果
         self.logger.info("Photo scanning completed")
-        self.print_summary()
+        total_bibs, total_bib_photos, total_faces = await self.db.get_event_count(self.event_id)
+        self.print_summary(total_bibs, total_bib_photos, total_faces)
+
+    def scan(self):
+        asyncio.run(self.scan_async())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scan photo for face and bib of an event")
-    parser.add_argument("-e", "--event-id", help="Event-ID")
+    parser.add_argument("-e", "--event-id", type=int, help="Event-ID")
     args = parser.parse_args()
     try:
         set_start_method('spawn')
@@ -252,4 +246,3 @@ if __name__ == "__main__":
         pass
     scaner = Scaner(args.event_id)
     scaner.scan()
-

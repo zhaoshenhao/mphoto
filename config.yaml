@@ -1,3 +1,4 @@
+# Updated config.yaml
 photo_dir: "data"
 temp_dir: "/tmp"
 parallel:
@@ -13,6 +14,8 @@ database:
   password: mphoto
   database: mphoto_db
   default_search_limit: 100
+  min_size: 1
+  max_size: 10
 
 table_names:
   event: event
@@ -25,6 +28,9 @@ table_names:
 web:
   port: 8080
   host: 0.0.0.0
+  database:
+    min_size: 1
+    max_size: 20
 
 logging:
   level: "DEBUG"
@@ -58,3 +64,12 @@ search:
   face_similarity: 0.8
   face_detect_confidence: 0.70
   bib_confidence: 0.75
+
+# Merged from app.yaml
+storage:
+  base_url: "http://localhost:8000/file/"
+  base_path: "data/"
+  raw_path: "raw/"
+  thumb_path: "thumb/"
+  max_zip_size: 1073741824  # Single zip file size limit
+  max_total_download_size: 2147483648  # Total download limit

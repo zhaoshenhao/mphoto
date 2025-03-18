@@ -1,3 +1,0 @@
-fastapi
-opencv-python
-fastapi[standard]

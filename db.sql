@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS mphoto.event
     id SERIAL PRIMARY KEY,
     name character varying(100) NOT NULL,
     enabled boolean DEFAULT true NOT NULL,
-    expiry character varying(40) NOT NULL,
+    expiry TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT uniq_name UNIQUE (name)
 )
 ALTER TABLE IF EXISTS mphoto.event OWNER to mphoto_user;
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS mphoto.bib (
     event_id INTEGER NOT NULL REFERENCES mphoto.event(id) ON DELETE CASCADE,
     bib_number character varying(10)  NOT NULL,
     enabled BOOLEAN DEFAULT TRUE NOT NULL,
-    expiry character varying(40) NOT NULL,
+    expiry TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     name character varying(100) NOT NULL,
     code character varying(20) NOT NULL,
     CONSTRAINT unique_bib_number UNIQUE (event_id, bib_number),
@@ -105,12 +105,12 @@ CREATE INDEX idx_face_photo_embedding ON mphoto.face_photo USING hnsw (embedding
 
 -- Test data (event)
 INSERT INTO mphoto.event (name, enabled, expiry) VALUES
-    ('2025 Chilly Half Marathon', TRUE, '2025-12-31'),
-    ('Sprint Challenge', FALSE, '2025-06-30');
+    ('2025 Chilly Half Marathon', TRUE, '2026-03-17 21:34:58.763336'),
+    ('Sprint Challenge', FALSE, '2026-03-17 21:34:58.763336');
 
 -- Test data (bib)
 INSERT INTO mphoto.bib (event_id, bib_number, enabled, expiry, name, code) VALUES
-    (1, '1024', TRUE, '2025-12-31', 'Allen Zhao', '1234567890'),
-    (1, '1704', TRUE, '2025-12-31', 'Robert Luo', '1234567891'),
+    (1, '1024', TRUE, '2026-03-17 21:34:58.763336', 'Allen Zhao', '1234567890'),
+    (1, '1704', TRUE, '2026-03-17 21:34:58.763336', 'Robert Luo', '1234567891'),
     (1, '2001', FALSE, '2025-06-30', 'Charlie', '0000000001');
 

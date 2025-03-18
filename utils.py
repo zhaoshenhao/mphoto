@@ -43,6 +43,6 @@ def setup_logging(prefix):
     return logger
 
 def get_event_dir(event_id, sub_dir):
-    p = os.path.join(config['photo_dir'], event_id)
+    p = os.path.join(config['photo_dir'], str(event_id))
     return os.path.join(p, sub_dir)
 
