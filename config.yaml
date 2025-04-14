@@ -2,7 +2,7 @@
 photo_dir: "data"
 temp_dir: "/tmp"
 parallel:
-  workers: 1
+  workers: 8
 photo_purge: False
 sync_timeout: 120
 master_wait_for: 90
@@ -26,11 +26,14 @@ table_names:
   face_photo: face_photo
 
 web:
-  port: 8080
-  host: 0.0.0.0
+  bind: 0.0.0.0:8080
   database:
     min_size: 1
     max_size: 20
+  recaptcha:
+    secret_key: 6LduOvsqAAAAAPo3BdzjXis-NHsB_M82oNkgVfxX
+    use: True # Set to true if using reCAPTCHA
+    verify_url: "https://www.google.com/recaptcha/api/siteverify"
 
 logging:
   level: "DEBUG"
@@ -67,7 +70,8 @@ search:
 
 # Merged from app.yaml
 storage:
-  base_url: "http://localhost:8000/file/"
+  base_url: "/file/"
+  #base_url: "http://localhost:8080/file/"
   base_path: "data/"
   raw_path: "raw/"
   thumb_path: "thumb/"

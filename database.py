@@ -83,16 +83,16 @@ class Database:
                 )
                 return (await cur.fetchone())[0]
 
-    async def add_photo(self, event_id, photo_path, timestamp):
+    async def add_photo(self, event_id, photo_path, file_size_bytes, timestamp):
         await self._ensure_pool()
         async with self.pool.connection() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"""
-                    INSERT INTO {TABLES['photo']} (event_id, photo_path, last_updated) VALUES (%s, %s, %s)
+                    INSERT INTO {TABLES['photo']} (event_id, photo_path, size, last_updated) VALUES (%s, %s, %s, %s)
                         ON CONFLICT(event_id, photo_path) DO UPDATE SET last_updated = %s RETURNING id
                     """,
-                    (event_id, photo_path, timestamp, timestamp)
+                    (event_id, photo_path, file_size_bytes, timestamp, timestamp)
                 )
                 return (await cur.fetchone())[0]
 

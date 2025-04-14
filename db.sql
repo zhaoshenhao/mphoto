@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS mphoto.photo (
     id SERIAL PRIMARY KEY,
     event_id INTEGER NOT NULL REFERENCES mphoto.event(id) ON DELETE CASCADE,
     photo_path TEXT NOT NULL,
+    size INTEGER DEFAULT 0 NOT NULL,
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT unique_photo_path UNIQUE (event_id, photo_path)
 );
@@ -84,6 +85,45 @@ CREATE TABLE IF NOT EXISTS mphoto.face_photo (
     confidence FLOAT NOT NULL
 );
 ALTER TABLE IF EXISTS mphoto.bib_photo OWNER to mphoto_user;
+
+CREATE TABLE IF NOT EXISTS mphoto.cloud_storage
+(
+    id SERIAL PRIMARY KEY,
+    event_id integer NOT NULL REFERENCES mphoto.event(id) ON DELETE CASCADE,
+    url character varying(200) NOT NULL,
+    purge boolean NOT NULL DEFAULT false,
+    description text,
+    CONSTRAINT unique_url UNIQUE (url)
+)
+ALTER TABLE IF EXISTS mphoto.cloud_storage OWNER to mphoto_user;
+
+-- Create users table
+CREATE TABLE IF NOT EXISTS mphoto.users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    phone VARCHAR(20),
+    password VARCHAR(128) NOT NULL,  -- Stores SHA512 hashed password
+    role VARCHAR(10) NOT NULL CHECK (role IN ('admin', 'user')),
+    description TEXT,
+    reset_token VARCHAR(64),  -- For password reset
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP
+);
+ALTER TABLE IF EXISTS mphoto.users OWNER TO mphoto_user;
+
+CREATE TABLE IF NOT EXISTS event_manager (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+    UNIQUE(user_id, event_id)
+);
+ALTER TABLE IF EXISTS mphoto.event_manager OWNER TO mphoto_user;
+
+
+-- Create indexes
+CREATE INDEX idx_users_email ON mphoto.users(email);
+CREATE INDEX idx_users_role ON mphoto.users(role);
 
 -- Grant mphoto_user to all table
 GRANT ALL ON SCHEMA mphoto TO mphoto_user;
@@ -114,3 +154,12 @@ INSERT INTO mphoto.bib (event_id, bib_number, enabled, expiry, name, code) VALUE
     (1, '1704', TRUE, '2026-03-17 21:34:58.763336', 'Robert Luo', '1234567891'),
     (1, '2001', FALSE, '2025-06-30', 'Charlie', '0000000001');
 
+-- Insert admin user
+INSERT INTO mphoto.users (email, name, phone, password, role, description) VALUES (
+    'allen.zhao@gmail.com',
+    'azhao',
+    '123-456-7890',
+    '$6$rounds=656000$4vW8Qz5Qz5Qz5Qz5$3Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5Qz5',  -- SHA512 hash of "Admin123!"
+    'admin',
+    'System Administrator'
+);

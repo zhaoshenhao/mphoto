@@ -123,7 +123,9 @@ class Scaner:
                     self.logger.debug(f"Added {rel_path} to update list with photo_id {photo_id}")
             else:
                 yesterday = datetime.fromtimestamp(file_timestamp - 24 * 3600)
-                photo_id = await self.db.add_photo(self.event_id, rel_path, yesterday)
+                file_path = os.path.join(self.work_dir, rel_path)
+                file_size_bytes = os.path.getsize(file_path)
+                photo_id = await self.db.add_photo(self.event_id, rel_path, file_size_bytes, yesterday)
                 self.update_list.append((photo_id, rel_path))
                 self.logger.debug(f"Added new photo {rel_path} with photo_id {photo_id}")
 

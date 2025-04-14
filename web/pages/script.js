@@ -1,7 +1,9 @@
-const API_BASE_URL = "http://localhost:8000";
+//const API_BASE_URL = "http://localhost:8080";
+const API_BASE_URL = `${window.location.protocol}//${window.location.host}`;
+console.log(API_BASE_URL)
 let bibInfo = null;
 let thumbs = [];
-let cropper;
+let cropper = null; // Initialize cropper as null explicitly
 
 function showTab(index) {
     document.querySelectorAll(".tab-content").forEach((el, i) => {
@@ -14,9 +16,23 @@ function showTab(index) {
 
 async function submitCode() {
     const code = document.getElementById("invite-code").value;
+    const recaptchaResponse = window.grecaptcha ? grecaptcha.getResponse() : '';
+    if (!window.__CF$cv$params && !recaptchaResponse) {
+        Swal.fire({
+            title: "CAPTCHA Required",
+            text: "Please complete the CAPTCHA to proceed.",
+            icon: "warning",
+            confirmButtonText: "OK"
+        });
+        return;
+    }
+
     const response = await fetch(`${API_BASE_URL}/bib`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+            "Content-Type": "application/json",
+            ...(recaptchaResponse && { "X-Recaptcha-Token": recaptchaResponse })
+        },
         body: JSON.stringify({ code })
     });
     const data = await response.json();
@@ -57,12 +73,17 @@ function updateCheckboxState() {
 }
 
 function loadImage() {
-    const file = document.getElementById("image-input").files[0];
+    const fileInput = document.getElementById("image-input");
+    const file = fileInput.files[0];
+    const img = document.getElementById("crop-image");
+    
     if (file) {
-        const img = document.getElementById("crop-image");
         img.src = URL.createObjectURL(file);
         img.style.display = "block";
-        if (cropper) cropper.destroy();
+        if (cropper) {
+            cropper.destroy();
+            cropper = null; // Ensure old cropper is fully cleared
+        }
         
         cropper = new Cropper(img, {
             aspectRatio: 358 / 441,
@@ -72,34 +93,71 @@ function loadImage() {
             zoomable: true,
         });
         
-        document.querySelectorAll(".copy-btn").forEach(btn => btn.disabled = false);
-        
+        // Assign onclick handlers after cropper creation
         document.getElementById("copy-0").onclick = () => copyToFace(0);
         document.getElementById("copy-1").onclick = () => copyToFace(1);
         document.getElementById("copy-2").onclick = () => copyToFace(2);
-    } else {
-        document.querySelectorAll(".copy-btn").forEach(btn => btn.disabled = true);
     }
+    
+    // Enable/disable Paste buttons based on cropper existence
+    const hasCropper = !!cropper;
+    document.querySelectorAll(".copy-btn").forEach(btn => {
+        btn.disabled = !hasCropper;
+    });
+    
+    // Reset file input
+    fileInput.value = "";
+    
     updateCheckboxState();
 }
 
 function copyToFace(index) {
     if (cropper) {
         const canvas = cropper.getCroppedCanvas({ width: 358, height: 441 });
+        const quality = 0.7;
+        let imgData = canvas.toDataURL('image/jpeg', quality);
+        let blob = dataURLtoBlob(imgData);
+        
+        while (blob.size > 260 * 1024 && quality > 0.1) {
+            imgData = canvas.toDataURL('image/jpeg', quality - 0.1);
+            blob = dataURLtoBlob(imgData);
+        }
+
         const imgEl = document.createElement("img");
-        imgEl.src = canvas.toDataURL();
+        imgEl.src = imgData;
         const faceBox = document.getElementById(`face-${index}`);
         faceBox.innerHTML = "";
         faceBox.appendChild(imgEl);
         
+        // Set the corresponding "Use" checkbox to true
+        const useCheckbox = document.getElementById(`use-${index}`);
+        useCheckbox.checked = true;
+        
         cropper.destroy();
+        cropper = null;
         const img = document.getElementById("crop-image");
         img.src = "";
         img.style.display = "none";
+        
+        // Disable Paste buttons after pasting
         document.querySelectorAll(".copy-btn").forEach(btn => btn.disabled = true);
         
         updateCheckboxState();
+    } else {
+        console.error("No active cropper instance to paste from.");
     }
+}
+
+function dataURLtoBlob(dataURL) {
+    const arr = dataURL.split(',');
+    const mime = arr[0].match(/:(.*?);/)[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
 }
 
 async function submitFaces() {
@@ -114,11 +172,11 @@ async function submitFaces() {
     if (images.length === 0) {
         const { value: action } = await Swal.fire({
             title: "No faces selected",
-            html: "Press <b>Continue</b> to search photos<br>Press <b>Add</b> to add or use face image",
+            html: "Press <b>Continue</b> to search photos<br>Press <b>Add Face</b> to add or use face image",
             icon: "warning",
             showCancelButton: true,
             confirmButtonText: "Continue",
-            cancelButtonText: "Add",
+            cancelButtonText: "Add Face",
             reverseButtons: true,
             focusConfirm: false,
             customClass: {
@@ -128,9 +186,8 @@ async function submitFaces() {
         });
 
         if (action === undefined || action === "Add") {
-            return; // 如果选择 "Add" 或关闭对话框，停留在当前页面
+            return;
         }
-        // 如果选择 "Continue"，继续提交空列表
     }
     
     const response = await fetch(`${API_BASE_URL}/thumb`, {
@@ -154,25 +211,57 @@ async function submitFaces() {
     document.getElementById("tab2").disabled = false;
     showTab(2);
     displayThumbs();
-    document.getElementById("submit-faces").disabled = true;
-    setTimeout(() => document.getElementById("submit-faces").disabled = false, 60000);
+
+    const submitButton = document.getElementById("submit-faces");
+    submitButton.disabled = true;
+    const disableDuration = 60000;
+    let remainingTime = disableDuration / 1000;
+
+    const updateCountdown = () => {
+        submitButton.textContent = `Submit (${remainingTime})`;
+        remainingTime--;
+        if (remainingTime < 0) {
+            clearInterval(countdownInterval);
+            submitButton.textContent = "Submit";
+            submitButton.disabled = false;
+        }
+    };
+    updateCountdown();
+    const countdownInterval = setInterval(updateCountdown, 1000);
 }
 
 function displayThumbs() {
     const grid = document.getElementById("thumbs-grid");
+    const controlsTop = document.getElementById("thumbnail-controls-top");
+    const controlsBottom = document.getElementById("thumbnail-controls-bottom");
+    const totalPhotos = document.getElementById("total-photos");
+    const noPhotosMessage = document.getElementById("no-photos-message");
     grid.innerHTML = "";
-    thumbs.thumbs.forEach(thumb => {
-        const div = document.createElement("div");
-        div.style.position = "relative";
-        const img = document.createElement("img");
-        img.src = `${thumbs["main-url"]}${thumb}`;
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.value = thumb;
-        div.appendChild(img);
-        div.appendChild(checkbox);
-        grid.appendChild(div);
-    });
+    
+    if (thumbs.thumbs.length === 0) {
+        noPhotosMessage.style.display = "block";
+        totalPhotos.textContent = "No photos found for the bib and face uploaded.";
+        controlsTop.style.display = "none";
+        controlsBottom.style.display = "none";
+    } else {
+        noPhotosMessage.style.display = "none";
+        totalPhotos.textContent = `Total photos found: ${thumbs.thumbs.length}`;
+        thumbs.thumbs.forEach(thumb => {
+            const div = document.createElement("div");
+            div.style.position = "relative";
+            const img = document.createElement("img");
+            img.src = `${thumbs["main-url"]}${thumb}`;
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.value = thumb;
+            checkbox.checked = true;
+            div.appendChild(img);
+            div.appendChild(checkbox);
+            grid.appendChild(div);
+        });
+        controlsTop.style.display = "block";
+        controlsBottom.style.display = "block";
+    }
 }
 
 function selectAll() {
@@ -190,7 +279,6 @@ function selectInverse() {
 async function download() {
     const selected = Array.from(document.querySelectorAll("#thumbs-grid input:checked")).map(cb => cb.value);
 
-    // 情况 1：没有选择任何缩略图
     if (selected.length === 0) {
         await Swal.fire({
             title: "No images selected",
@@ -198,10 +286,9 @@ async function download() {
             icon: "warning",
             confirmButtonText: "OK"
         });
-        return; // 用户确认后不提交
+        return;
     }
 
-    // 情况 2：有选择的缩略图，显示总数并让用户确认
     const { isConfirmed } = await Swal.fire({
         title: "Confirm Download",
         text: `You have selected ${selected.length} thumbnail(s). Do you want to proceed with the download?`,
@@ -213,10 +300,9 @@ async function download() {
     });
 
     if (!isConfirmed) {
-        return; // 用户取消，不提交
+        return;
     }
 
-    // 情况 3：提交后显示 Loading Indicator
     const loadingSwal = Swal.fire({
         title: "Processing",
         text: "Preparing your download, please wait...",
@@ -238,7 +324,6 @@ async function download() {
             throw new Error(errorData.error || "Failed to download files.");
         }
 
-        // 下载开始前关闭 Loading Indicator，提示下载开始
         await loadingSwal.close();
         const downloadSwal = Swal.fire({
             title: "Download Started",
@@ -250,25 +335,18 @@ async function download() {
             }
         });
 
-        // 获取文件流并转换为 Blob
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
-
-        // 创建临时链接并触发下载
         const link = document.createElement("a");
         link.href = url;
         link.download = "photo.zip";
         document.body.appendChild(link);
         link.click();
-
-        // 清理临时链接
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
 
-        // 下载完成后关闭提示窗口
         await downloadSwal.close();
     } catch (error) {
-        // 出错时关闭 Loading Indicator 并显示错误
         await loadingSwal.close();
         await Swal.fire({
             title: "Download Error",
@@ -281,4 +359,9 @@ async function download() {
 
 window.onload = () => {
     updateCheckboxState();
+    if (!window.__CF$cv$params && window.grecaptcha) {
+        grecaptcha.render("recaptcha-container", {
+            "sitekey": "6LduOvsqAAAAAFq70zQvjSds5g16UclT-JkEVqak"
+        });
+    }
 };
