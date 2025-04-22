@@ -31,7 +31,7 @@ web:
     min_size: 1
     max_size: 20
   recaptcha:
-    secret_key: 6LduOvsqAAAAAPo3BdzjXis-NHsB_M82oNkgVfxX
+    secret_key: <key>
     use: True # Set to true if using reCAPTCHA
     verify_url: "https://www.google.com/recaptcha/api/siteverify"
 
