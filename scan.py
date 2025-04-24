@@ -6,26 +6,57 @@ import traceback
 import psutil
 import time
 import asyncio
+import numpy as np
+import json
 from multiprocessing import Process, Manager, set_start_method
-from utils import setup_logging, get_event_dir
+from utils import setup_logging
 from datetime import datetime
 from config import config
-from database import Database
+from client_api import ClientAPI
+from gdrive import GoogleDrive
+from PIL import Image
+from pillow_heif import register_heif_opener
 
-def worker_process(worker_id, photo_queue, result_queue, config, work_dir):
+register_heif_opener()
+tmp_dir = config.get('tmp_dir', './tmp')
+
+def is_heic_file(file_path):
+    extension = os.path.splitext(file_path)[1].lower()
+    return extension == '.heic'
+
+def load_heic_image(file_path):
+    try:
+        pil_image = Image.open(file_path).convert('RGB')
+        img_array = np.array(pil_image)
+        img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        return img_bgr
+    except Exception as e:
+        print(f"Error loading HEIC image: {e}")
+        return None
+    
+def open_image(f):
+    print(f)
+    if is_heic_file(f):
+        return load_heic_image(f)
+    else:
+        return cv2.imread(f)
+
+def worker_process(worker_id, photo_queue, result_queue):
     logger = setup_logging(f"{config['logging']['scan_prefix']}_worker_{worker_id}")
     from processor import ImageProcessor
     processor = ImageProcessor(config, logger)
-    db = Database(logger)
-    asyncio.run(db._ensure_pool())  # Initialize pool in each process
     logger.info(f"Worker {worker_id} started")
+    gclient = GoogleDrive()
+    mclient = ClientAPI()
     
     while True:
         try:
-            photo_path = photo_queue.get(timeout=1)
-            if photo_path is None:
-                logger.info(f"Worker {worker_id} received sentinel value, exiting")
+            p = photo_queue.get(timeout=1)
+            if p is None:
+                logger.info(f"Worker {worker_id} received sentinel(None) value, exiting")
                 break
+            else:
+                logger.info(f"Worker {worker_id} received photo: {p['name']} ({p['id']} / {p['gdid']})")
         except multiprocessing.queues.Empty:
             logger.info(f"Worker {worker_id} found photo queue empty, exiting")
             break
@@ -33,12 +64,16 @@ def worker_process(worker_id, photo_queue, result_queue, config, work_dir):
         try:
             process = psutil.Process()
             mem_before = process.memory_info().rss / 1024 / 1024
-            logger.info(f"Worker {worker_id} memory usage before processing {photo_path}: {mem_before:.2f} MB")
+            logger.info(f"Worker {worker_id} memory usage before processing {p['name']}: {mem_before:.2f} MB")
+
+            f = os.path.join(tmp_dir, p['name'])
+            logger.info(f"Download file from google drive: {f}")
+            gclient.download(p['gdid'], f)
             
-            img = cv2.imread(photo_path)
+            img = open_image(f)
             if img is None:
-                logger.error(f"Worker {worker_id} failed to load image: {photo_path}")
-                result_queue.put((photo_path, [], [], worker_id))
+                logger.error(f"Worker {worker_id} failed to load image: {p['name']}")
+                result_queue.put((p['name'], -1))
                 continue
             
             height, width = img.shape[:2]
@@ -47,143 +82,100 @@ def worker_process(worker_id, photo_queue, result_queue, config, work_dir):
                 new_width = 2000
                 new_height = int(height * scale)
                 img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                logger.debug(f"Worker {worker_id} resized {photo_path} from {width}x{height} to {new_width}x{new_height}")
+                logger.debug(f"Worker {worker_id} resized {f} from {width}x{height} to {new_width}x{new_height}")
             
             img2 = img.copy()
-            rel_path = os.path.relpath(photo_path, work_dir)
-            face_embeddings = processor.process_faces(img, photo_path, logger)
-            bibs = processor.process_bibs(img2, photo_path, logger)
-            
+            face_embeddings = processor.process_faces(img, f, logger)
+            bibs = processor.process_bibs(img2, f, logger)
+            f_list = []
+            for (embedding, confidence) in face_embeddings:
+                f = {}
+                f['embedding'] = embedding.tolist()
+                f['confidence'] = confidence
+                f_list.append(f)
+            b_list = []
+            for (bib_number, confidence) in bibs:
+                b = {}
+                b['bib_number'] = bib_number
+                b['confidence'] = confidence
+                b_list.append(b)
+            data = {
+                'bib_photos': b_list,
+                'face_photos': f_list
+            }
+            logger.info(f"Add photo result:")
+            logger.info(f"Worker {worker_id} Add photo result: {p['name']} ({p['id']} / {p['gdid']})")
+            logger.info(f"  found bibs: {len(b_list)}")
+            logger.info(f"  found faces: {len(f_list)}")
+            mclient.add_photo_result(p['id'], data)
             mem_after = process.memory_info().rss / 1024 / 1024
-            logger.info(f"Worker {worker_id} memory usage after processing {photo_path}: {mem_after:.2f} MB")
-            
-            result_queue.put((rel_path, bibs, face_embeddings, worker_id))
+            result_queue.put((p['name'], 0))
+            logger.info(f"Worker {worker_id} memory usage after processing {p['name']}: {mem_after:.2f} MB")
         except Exception as e:
-            logger.error(f"Worker {worker_id} error for {photo_path}: {str(e)}\n{traceback.format_exc()}")
-            result_queue.put((photo_path, [], [], worker_id))
+            logger.error(f"Worker {worker_id} error for {p['name']}: {str(e)}\n{traceback.format_exc()}")
+            result_queue.put((p['name'], -1))
         logger.debug(f"Worker {worker_id}: Send status sync")
-    
     logger.info(f"Worker {worker_id} completed and exiting")
 
 class Scaner:
-    def __init__(self, event_id):
+    def __init__(self, cloud_storage_id):
         self.logger = setup_logging(config['logging']['scan_prefix'])
-        self.db = Database(self.logger)
         self.sync_timeout = config.get('sync_timeout', 60)
-        self.event_id = event_id
-        self.work_dir = get_event_dir(self.event_id, 'raw')
+        self.cloud_storage_id = cloud_storage_id
         self.total_photos = 0
         self.processed_count = 0
         self.incomplete_count = 0
-        self.photo_info = {}
-        self.image_ext = ('.png', '.jpg', '.jpeg')
         self.update_list = []
+        self.mclient = ClientAPI()
 
-    def print_summary(self, total_bibs, total_bib_photos, total_faces):
-        print(f"Total bibs: {total_bibs}")
-        print(f"Total photos: {self.total_photos}")
-        print(f"Total faces: {total_faces}")
-        print(f"Total bibs photos: {total_bib_photos}")
+    def print_summary(self):
+        print(f"Total batch photos: {self.total_photos}")
         print(f"Total processed photos: {self.processed_count}")
         print(f"Failed photos count: {self.incomplete_count}")
-
-    def get_photo_list(self):
-        self.photo_info = {}
-        self.logger.debug(f"Workdir: {self.work_dir}")
-        for root, _, files in os.walk(self.work_dir):
-            for file in files:
-                if file.lower().endswith(self.image_ext):
-                    photo_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(photo_path, self.work_dir)
-                    timestamp = os.path.getmtime(photo_path)
-                    self.photo_info[rel_path] = timestamp
-
-        self.total_photos = len(self.photo_info)
-        self.logger.info(f"Found {self.total_photos} photos to process")
-
-    async def get_update_list_async(self):
-        self.get_photo_list()
-        db_photos = await self.db.get_event_photo_info(self.event_id)
-        photo_purge = config.get('photo_purge', False)
-        if not photo_purge:
-            for db_path, (photo_id, _) in db_photos.items():
-                if db_path not in self.photo_info:
-                    await self.db.delete_photo(photo_id)
-                    self.logger.info(f"Purged photo_id {photo_id} for path {db_path} not found in file system")
-
-        for rel_path, file_timestamp in self.photo_info.items():
-            if rel_path in db_photos:
-                photo_id, db_timestamp = db_photos[rel_path]
-                if db_timestamp.timestamp() >= file_timestamp:
-                    self.logger.debug(f"Skipping {rel_path}: database timestamp {db_timestamp} >= file timestamp {file_timestamp}")
-                    continue
-                else:
-                    await self.db.delete_photo_ref(photo_id)
-                    self.update_list.append((photo_id, rel_path))
-                    self.logger.debug(f"Added {rel_path} to update list with photo_id {photo_id}")
-            else:
-                yesterday = datetime.fromtimestamp(file_timestamp - 24 * 3600)
-                photo_id = await self.db.add_photo(self.event_id, rel_path, yesterday)
-                self.update_list.append((photo_id, rel_path))
-                self.logger.debug(f"Added new photo {rel_path} with photo_id {photo_id}")
-
-        self.logger.info(f"Photos to update: {len(self.update_list)}")
+        print(json.dumps(self.mclient.get_cloud_storage_detail(self.cloud_storage_id), indent=2))
 
     async def scan_async(self):
-        self.logger.info(f"Starting photo scan for event: {self.event_id}")
         total_memory = psutil.virtual_memory().total / 1024 / 1024
         self.logger.info(f"Total system memory: {total_memory:.2f} MB")
-        await self.get_update_list_async()
     
-        if len(self.update_list) <= 0:
-            self.logger.info(f"Update list is empty")
-            total_bibs, total_bib_photos, total_faces = await self.db.get_event_count(self.event_id)
-            self.print_summary(total_bibs, total_bib_photos, total_faces)
-            return
-
         manager = Manager()
         photo_queue = manager.Queue()
         result_queue = manager.Queue()
     
-        for _, photo_path in self.update_list:
-            photo_queue.put(os.path.join(self.work_dir, photo_path))
+        for p in self.update_list:
+            photo_queue.put(p)
+        
         parallel_workers = config.get('parallel', {}).get('workers', 4)
+        available_cores = os.cpu_count()
+        parallel_workers = min(parallel_workers, available_cores, int(self.total_photos / 2) or 1)
         for _ in range(parallel_workers):
             photo_queue.put(None)
         self.logger.info(f"Loaded {len(self.update_list)} photos into queue with {parallel_workers} sentinels")
     
-        available_cores = os.cpu_count()
-        parallel_workers = min(parallel_workers, available_cores, self.total_photos / 2 or 1)
         self.logger.info(f"Starting {parallel_workers} worker processes (CPU cores: {available_cores}, images: {self.total_photos})")
     
+        os.makedirs(tmp_dir, exist_ok=True)
         worker_status = {}
         workers = {}
         for i in range(parallel_workers):
-            p = Process(target=worker_process, args=(i, photo_queue, result_queue, config, self.work_dir))
+            p = Process(target=worker_process, args=(i, photo_queue, result_queue))
             p.start()
             workers[i] = p
             worker_status[i] = time.time() + config['master_wait_for']
     
-        empty_queue_time_stamp = None
-
         while True:
             await asyncio.sleep(1)  # Async sleep
             active_workers = sum(1 for p in workers.values() if p.is_alive())
             self.logger.debug(f"Active workers: {active_workers}, processed: {self.processed_count}, failed: {self.incomplete_count}, total: {len(self.update_list)}")
         
+            # Check completion 
             current_time = time.time()
             completed = False
-            if photo_queue.qsize() <= 0:
-                if empty_queue_time_stamp is None:
-                    empty_queue_time_stamp = time.time()
-                elif current_time - empty_queue_time_stamp > self.sync_timeout:
-                    self.logger.info(f"Queue was empty over {self.sync_timeout} seconds.")
-                    completed = True
-            if self.processed_count + self.incomplete_count >= len(self.update_list):
+            if (photo_queue.qsize() <= 0 and active_workers <= 0) or (self.processed_count + self.incomplete_count >= len(self.update_list)):
                 self.logger.info(f"All photos accounted for: processed {self.processed_count}, incomplete {self.incomplete_count}, total {len(self.update_list)}")
                 completed = True
             if completed:
-                await asyncio.sleep(5)  # Async sleep
+                await asyncio.sleep(5)
                 for worker_id, p in workers.items():
                     if p.is_alive():
                         self.logger.info(f"Terminating worker {worker_id}")
@@ -191,58 +183,58 @@ class Scaner:
                         p.join()
                 break
 
+            # Kill hanging worker and create new worker
             for worker_id, last_updated in list(worker_status.items()):
                 if current_time - last_updated > self.sync_timeout:
                     last_update = datetime.fromtimestamp(last_updated).strftime('%c')
-                    self.logger.warning(f"Worker {worker_id} timed out (last updated {last_update})")  # Fixed typo
+                    self.logger.warning(f"Worker {worker_id} timed out (last updated {last_update})")
                     workers[worker_id].kill()
                     workers[worker_id].join()
                     self.incomplete_count += 1
                 
                     worker_status[worker_id] = time.time() + config['master_wait_for']
-                    new_p = Process(target=worker_process, args=(worker_id, photo_queue, result_queue, config, self.work_dir))  # Fixed args
+                    new_p = Process(target=worker_process, args=(worker_id, photo_queue, result_queue))
                     new_p.start()
                     workers[worker_id] = new_p
                     self.logger.info(f"Restarted worker {worker_id}")
-        
+            
             try:
-                rel_path, bibs, face_embeddings, worker_id = result_queue.get(timeout=1)
+                _, status = result_queue.get(timeout=1)
                 self.processed_count += 1
+                if status < 0:
+                    self.incomplete_count += 1
                 self.logger.debug(f"Processed {self.processed_count}/{len(self.update_list)} photos")
-            
-                photo_id = next(pid for pid, path in self.update_list if path == rel_path)
-                self.logger.debug(f"Save data: worker: {worker_id}, photo({photo_id}): {rel_path}")
-            
-                for bib, confidence in bibs:
-                    await self.db.add_bib_photo(self.event_id, bib, photo_id, confidence)
-                    self.logger.info(f"Added bib {bib} with confidence {confidence} for photo_id {photo_id}")
-                for embedding, confidence in face_embeddings:
-                    await self.db.add_face_photo(self.event_id, photo_id, embedding, confidence)
-                    self.logger.info(f"Added face with confidence {confidence} for photo_id {photo_id}")
-                await self.db.update_photo(photo_id, datetime.now())
-                self.logger.debug(f"Updated timestamp for photo_id {photo_id} to {current_time}")
-                worker_status[worker_id] = current_time
-        
+
             except multiprocessing.queues.Empty:
                 pass
-    
+            
         for w in workers.values():
             w.join()
     
         self.logger.info("Photo scanning completed")
-        total_bibs, total_bib_photos, total_faces = await self.db.get_event_count(self.event_id)
-        self.print_summary(total_bibs, total_bib_photos, total_faces)
+        self.print_summary()
 
     def scan(self):
+        self.logger.info("Getting cloud storage info...")
+        cs = self.mclient.get_cloud_storage_detail(self.cloud_storage_id)
+        self.logger.info(f"Cloud Storage: {cs}")
+
+        self.logger.info("Getting photo list...")
+        self.update_list = self.mclient.list_photos(cloud_storage_id=self.cloud_storage_id, incomplete=True)
+        self.logger.info(f"Photos to update: {len(self.update_list)}")
+        if not self.update_list or len(self.update_list) == 0:
+            self.logger.info(f"No new or modified photo found.")
+            exit(0)
+        self.total_photos = len(self.update_list)
         asyncio.run(self.scan_async())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scan photo for face and bib of an event")
-    parser.add_argument("-e", "--event-id", type=int, help="Event-ID")
+    parser.add_argument("-c", "--cloud-storage-id", type=int, help="Cloud storage ID")
     args = parser.parse_args()
     try:
         set_start_method('spawn')
     except RuntimeError:
         pass
-    scaner = Scaner(args.event_id)
+    scaner = Scaner(args.cloud_storage_id)
     scaner.scan()

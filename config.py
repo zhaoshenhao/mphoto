@@ -8,28 +8,17 @@ from typing import Dict, Any
 CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 DEFAULT_CONFIG = {
-    # ... 默认配置与yaml结构一致 ...
 }
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
     try:
         with open(config_path, 'r') as f:
             mconfig = yaml.safe_load(f)
-        # 合并默认配置
         return {**DEFAULT_CONFIG, **mconfig}
     except FileNotFoundError:
         return DEFAULT_CONFIG
 
 config = load_config(CONFIG_PATH)
 
-DB_HOST = config['database']['host']
-DB_PORT = config['database']['port']
-DB_USER = config['database']['username']
-DB_PASS = config['database']['password']
-DB_NAME = config['database']['database']
-TABLES = config['table_names']
-WEB_HOST = config['web']['host']
-WEB_PORT = config['web']['port']
-LOG_LEVEL = config['logging']['level']
+#LOG_LEVEL = config['logging']['level']
 FORMAT = config['logging']['format']
-DEFAULT_SEARCH_LIMIT = config.get("database", {}).get("default_search_limit", 100)

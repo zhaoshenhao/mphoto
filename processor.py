@@ -7,18 +7,16 @@ import tensorflow as tf
 import paddle
 from datetime import datetime
 import traceback
-from config import config
+from utils import replace_parent_path
 
 class ImageProcessor:
     def __init__(self, config, logger):
         self.config = config
         self.logger = logger
-        self._initialize_models()  # 每次处理时初始化模型
+        self._initialize_models()
 
     def _initialize_models(self):
-        """为每个进程初始化独立的模型"""
         try:
-            # 检查 TensorFlow GPU 可用性 (DeepFace)
             gpus = tf.config.list_physical_devices('GPU')
             if self.config['deepface']['use_gpu'] and len(gpus) == 0:
                 self.logger.warning("GPU requested but not available for DeepFace")
@@ -27,7 +25,6 @@ class ImageProcessor:
             else:
                 self.logger.info("Running DeepFace on CPU as per config")
 
-            # 检查 PaddlePaddle GPU 可用性 (PaddleOCR)
             paddle_gpus = paddle.device.cuda.device_count()
             if self.config['ocr']['use_gpu'] and paddle_gpus == 0:
                 self.logger.warning("GPU requested but not available for PaddleOCR")
@@ -36,7 +33,6 @@ class ImageProcessor:
             else:
                 self.logger.info("Running PaddleOCR on CPU as per config")
 
-            # 初始化 PaddleOCR
             self.ocr = PaddleOCR(
                 use_gpu=self.config['ocr']['use_gpu'],
                 use_angle_cls=True,
@@ -88,7 +84,6 @@ class ImageProcessor:
             logger.error(f"Face processing error for {image_path}: {str(e)}\n{traceback.format_exc()}")
             return []
 
-    # process_bibs 和其他方法保持不变，仅增强错误日志
     def process_bibs(self, image, image_path, logger):
         try:
             result = self.ocr.ocr(image)
@@ -143,6 +138,6 @@ class ImageProcessor:
         else:  # ocr
             debug_dir = self.config['ocr']['debug_dir']
 
-        debug_path = image_path.replace(self.config['photo_dir'], debug_dir)
+        debug_path = os.path.splitext(replace_parent_path(image_path, debug_dir))[0] + "_debug.jpg"
         os.makedirs(os.path.dirname(debug_path), exist_ok=True)
         cv2.imwrite(debug_path, img)

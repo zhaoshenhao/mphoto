@@ -1,43 +1,19 @@
-# Updated config.yaml
-photo_dir: "data"
-temp_dir: "/tmp"
+temp_dir: "./tmp"
 parallel:
-  workers: 1
-photo_purge: False
+  workers: 2
 sync_timeout: 120
 master_wait_for: 90
 
-database:
-  host: localhost
-  port: 5432
-  username: mphoto_user
-  password: mphoto
-  database: mphoto_db
-  default_search_limit: 100
-  min_size: 1
-  max_size: 10
-
-table_names:
-  event: event
-  bib: bib
-  download_history: download_history
-  photo: photo
-  bib_photo: bib_photo
-  face_photo: face_photo
-
-web:
-  port: 8080
-  host: 0.0.0.0
-  database:
-    min_size: 1
-    max_size: 20
+api:
+  #api_url: http://localhost:8000/mphoto/api/
+  api_url: http://compusky.com/mphoto/api/
+  api_key: zzdevxyvgwvmoh12345
 
 logging:
   level: "DEBUG"
   dir: "logs"
   scan_prefix: "scan"
-  get_prefix: "search"
-  web_prefix: "web"
+  cli_prefix: "cli"
   screen_print: True
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
@@ -53,23 +29,9 @@ deepface:
   embedding_dim: 512
 
 ocr:
-  use_gpu: True
+  use_gpu: False
   debug: True
   debug_dir: "ocr_debug"
   min_size: 3
   max_size: 5
   confidence: 0.3
-
-search:
-  face_similarity: 0.8
-  face_detect_confidence: 0.70
-  bib_confidence: 0.75
-
-# Merged from app.yaml
-storage:
-  base_url: "http://localhost:8000/file/"
-  base_path: "data/"
-  raw_path: "raw/"
-  thumb_path: "thumb/"
-  max_zip_size: 1073741824  # Single zip file size limit
-  max_total_download_size: 2147483648  # Total download limit

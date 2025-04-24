@@ -1,0 +1,8 @@
+gdrive_svc_account.json
+.idea/
+__pycache__/
+logs/
+tmp/
+face_debug/
+ocr_debug/
+.idea/

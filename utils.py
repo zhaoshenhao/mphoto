@@ -1,19 +1,13 @@
-import yaml
 import logging
-from datetime import datetime
 import os
+from datetime import datetime
 from config import config
 
 def setup_logging(prefix):
-    # 创建日志目录
     log_dir = config['logging']['dir']
     os.makedirs(log_dir, exist_ok=True)
-    
-    # 生成带时间戳的日志文件名
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H:%M:%S.%f")[:-3]
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H_%M_%S.%f")[:-3]
     log_file = f"{log_dir}/{prefix}-{timestamp}.log"
-    
-    # 创建日志器
     logger = logging.getLogger(__name__)
     level_str = config.get('logging', {}).get('level', 'INFO').upper()
     level = getattr(logging, level_str, logging.INFO)
@@ -42,7 +36,7 @@ def setup_logging(prefix):
     
     return logger
 
-def get_event_dir(event_id, sub_dir):
-    p = os.path.join(config['photo_dir'], str(event_id))
-    return os.path.join(p, sub_dir)
-
+def replace_parent_path(original_path, new_parent_path):
+    file_name = os.path.basename(original_path)
+    new_path = os.path.join(new_parent_path, file_name)
+    return new_path
