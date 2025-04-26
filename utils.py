@@ -1,7 +1,12 @@
 import logging
 import os
+import re
+import urllib.parse
+from typing import Optional
 from datetime import datetime
 from config import config
+
+image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', 'heic']
 
 def setup_logging(prefix):
     log_dir = config['logging']['dir']
@@ -13,23 +18,17 @@ def setup_logging(prefix):
     level = getattr(logging, level_str, logging.INFO)
     logger.setLevel(level)
     
-    # 创建日志格式
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    
-    # 创建文件处理器
+
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
-    
-    # 创建屏幕处理器（如果配置允许）
+
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     
-    # 清除任何现有的处理器
     logger.handlers.clear()
-    
-    # 添加处理器
     logger.addHandler(file_handler)
     if config['logging']['screen_print']:
         logger.addHandler(console_handler)
@@ -40,3 +39,30 @@ def replace_parent_path(original_path, new_parent_path):
     file_name = os.path.basename(original_path)
     new_path = os.path.join(new_parent_path, file_name)
     return new_path
+
+def compare_timestamps(timestamp1: str, timestamp2: str) -> int:
+    dt1 = datetime.fromisoformat(timestamp1.replace('Z', '+00:00'))
+    dt2 = datetime.fromisoformat(timestamp2.replace('Z', '+00:00'))
+    if dt1 < dt2:
+        return -1
+    elif dt1 > dt2:
+        return 1
+    else:
+        return 0
+
+def extract_album_id(url):
+    marker = "google.com/lr/album/"
+    if marker in url:
+        return url.split(marker, 1)[1]
+    return None
+
+def extract_folder_id(url: str) -> Optional[str]:
+    match = re.search(r'/folders/([a-zA-Z0-9_-]+)', url)
+    if match:
+        return match.group(1)
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qs(parsed.query)
+    return query.get('id', [None])[0]
+
+def is_image_file(name: str) -> bool:
+    return any(name.lower().endswith(ext) for ext in image_exts)

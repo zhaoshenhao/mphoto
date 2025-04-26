@@ -6,3 +6,7 @@ tmp/
 face_debug/
 ocr_debug/
 .idea/
+downloaded_photos/
+.vscode/
+gphoto_cred.json
+gphoto_token.json

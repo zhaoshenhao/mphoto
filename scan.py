@@ -71,6 +71,7 @@ def worker_process(worker_id, photo_queue, result_queue):
             gclient.download(p['gdid'], f)
             
             img = open_image(f)
+            f_size = os.path.getsize(f)
             if img is None:
                 logger.error(f"Worker {worker_id} failed to load image: {p['name']}")
                 result_queue.put((p['name'], -1))
@@ -101,7 +102,8 @@ def worker_process(worker_id, photo_queue, result_queue):
                 b_list.append(b)
             data = {
                 'bib_photos': b_list,
-                'face_photos': f_list
+                'face_photos': f_list,
+                'photo_size': f_size
             }
             logger.info(f"Add photo result:")
             logger.info(f"Worker {worker_id} Add photo result: {p['name']} ({p['id']} / {p['gdid']})")
