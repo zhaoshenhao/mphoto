@@ -14,6 +14,7 @@ from datetime import datetime
 from config import config
 from client_api import ClientAPI
 from gdrive import GoogleDrive
+from gphoto import GooglePhotos
 from PIL import Image
 from pillow_heif import register_heif_opener
 
@@ -41,14 +42,17 @@ def open_image(f):
     else:
         return cv2.imread(f)
 
+
+
 def worker_process(worker_id, photo_queue, result_queue):
     logger = setup_logging(f"{config['logging']['scan_prefix']}_worker_{worker_id}")
     from processor import ImageProcessor
     processor = ImageProcessor(config, logger)
     logger.info(f"Worker {worker_id} started")
     gclient = GoogleDrive()
+    gphotot = GooglePhotos()
     mclient = ClientAPI()
-    
+
     while True:
         try:
             p = photo_queue.get(timeout=1)
@@ -68,7 +72,13 @@ def worker_process(worker_id, photo_queue, result_queue):
 
             f = os.path.join(tmp_dir, p['name'])
             logger.info(f"Download file from google drive: {f}")
-            gclient.download(p['gdid'], f)
+            if p['storage_type'] == 1:
+                gclient.download(p['gdid'], f)
+            elif p['storage_type'] == 2:
+                gphotot.download(p['base_url'], f)
+            else:
+                logger.info(f"Unsupported storage type {p['storage_type']}")
+                break
             
             img = open_image(f)
             f_size = os.path.getsize(f)
