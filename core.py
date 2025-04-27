@@ -48,6 +48,17 @@ def _refresh(cs_type, url, recursive, dblist):
         logger.info(f"Unsupported url: {url}")
         return [], [], []
 
+def dedup(in_list):
+    names = []
+    out_list = []
+    for l in in_list:
+        n = l['name']
+        if n in names:
+            continue
+        names.append(n)
+        out_list.append(n)
+    return out_list
+
 def refresh(cloud_storage_id):
     logger.info(f"Start refreshing: ")
     logger.info(f"Get cloud storage detail for ID {cloud_storage_id}")
@@ -63,10 +74,12 @@ def refresh(cloud_storage_id):
     logger.info(f"Total photos from database: {len(dblist)}")
     cs_type = detect_url_type(cs['url'])
     logger.info(f"URL type: {cs_type}")
-    only_new, changed, missing = _refresh(cs_type, cs['url'], cs['recursive'], dblist)
+    new_items, changed, missing = _refresh(cs_type, cs['url'], cs['recursive'], dblist)
+    only_new = dedup(new_items)
     logger.info(f"New file: {len(only_new)}")
     logger.info(f"Changed file: {len(changed)}")
     logger.info(f"Missing file: {len(missing)}")
+
     if len(only_new) > 0:
         logger.info(f"Processing new files")
         print_list(only_new)
