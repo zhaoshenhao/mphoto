@@ -16,6 +16,10 @@ class GooglePhotos:
             raise  # Re-raise the exception to stop execution
         self.service = build('photoslibrary', 'v1', credentials=creds, static_discovery=False)
 
+    def get_base_url_by_id(self, media_id):
+        ret = self.service.mediaItems().get(mediaItemId=media_id).execute()
+        return ret['baseUrl']
+
     def list_shared_album_photos(self, album_id):
         try:
             photos = []
@@ -45,7 +49,7 @@ class GooglePhotos:
                         'size': item.get('mediaMetadata.fileSize') if item.get('mediaMetadata.fileSize') else 0,
                         'created_time': item.get('mediaMetadata', {}).get('creationTime'),
                         'modified_time': item.get('mediaMetadata', {}).get('creationTime'),
-                        'base_url': item.get('baseUrl') 
+                        'base_url': item.get('productUrl') 
                     }
                     photos.append(photo_data)
                 next_page_token = results.get('nextPageToken')
@@ -57,6 +61,10 @@ class GooglePhotos:
             print(f"An error occurred: {e}")
             return None
 
+    def get_media_by_id(self, mediaId):
+        ret = self.service.mediaItems().get(mediaItemId=mediaId).execute()
+        return ret
+
     def scan_photos(self, url) -> List[Dict]:
         album_id = extract_album_id(url)
         print(f'url: {url}')
@@ -65,9 +73,10 @@ class GooglePhotos:
             return []
         return self.list_shared_album_photos(album_id)
 
-    def download(self, baseUrl: str, file_path: str) -> Optional[str]:
+    def download(self, id: str, file_path: str) -> Optional[str]:
         try:
             #  Get the download URL (baseUrl)
+            baseUrl = self.get_base_url_by_id(id)
             download_url = baseUrl + "=d"
             print(f"URL: {download_url}")
             #  Download the file using requests
@@ -155,4 +164,3 @@ class GooglePhotos:
         except Exception as e:
             print(f"An error occurred: {e}")
             return None
-

@@ -5,6 +5,7 @@ from utils import setup_logging
 from config import config
 from multiprocessing import set_start_method
 from scan import Scaner
+import json
 
 client = ClientAPI()
 gdrive = GoogleDrive()
@@ -84,7 +85,8 @@ def refresh(cloud_storage_id):
         gdids = [item['id'] for item in missing]
         j = client.delete_photos(cloud_storage_id, gdids)
         logger.info(f"return: {j}")
-    
+    cs = client.get_cloud_storage_detail(cloud_storage_id)
+    logger.info(json.dumps(cs, indent=2))
     logger.info(f"Done")
 
 def scan(cloud_storage_id):

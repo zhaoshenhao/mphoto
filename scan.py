@@ -70,18 +70,17 @@ def worker_process(worker_id, photo_queue, result_queue):
             mem_before = process.memory_info().rss / 1024 / 1024
             logger.info(f"Worker {worker_id} memory usage before processing {p['name']}: {mem_before:.2f} MB")
 
-            f = os.path.join(tmp_dir, p['name'])
-            logger.info(f"Download file from google drive: {f}")
+            image_file = os.path.join(tmp_dir, p['name'])
+            logger.info(f"Download file from google drive: {image_file}")
             if p['storage_type'] == 1:
-                gclient.download(p['gdid'], f)
+                gclient.download(p['gdid'], image_file)
             elif p['storage_type'] == 2:
-                gphotot.download(p['base_url'], f)
+                gphotot.download(p['gdid'], image_file)
             else:
                 logger.info(f"Unsupported storage type {p['storage_type']}")
                 break
             
-            img = open_image(f)
-            f_size = os.path.getsize(f)
+            img = open_image(image_file)
             if img is None:
                 logger.error(f"Worker {worker_id} failed to load image: {p['name']}")
                 result_queue.put((p['name'], -1))
@@ -93,23 +92,25 @@ def worker_process(worker_id, photo_queue, result_queue):
                 new_width = 2000
                 new_height = int(height * scale)
                 img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                logger.debug(f"Worker {worker_id} resized {f} from {width}x{height} to {new_width}x{new_height}")
+                logger.debug(f"Worker {worker_id} resized {image_file} from {width}x{height} to {new_width}x{new_height}")
             
             img2 = img.copy()
-            face_embeddings = processor.process_faces(img, f, logger)
-            bibs = processor.process_bibs(img2, f, logger)
+            face_embeddings = processor.process_faces(img, image_file, logger)
+            bibs = processor.process_bibs(img2, image_file, logger)
             f_list = []
             for (embedding, confidence) in face_embeddings:
-                f = {}
-                f['embedding'] = embedding.tolist()
-                f['confidence'] = confidence
-                f_list.append(f)
+                face = {}
+                face['embedding'] = embedding.tolist()
+                face['confidence'] = confidence
+                f_list.append(face)
             b_list = []
             for (bib_number, confidence) in bibs:
                 b = {}
                 b['bib_number'] = bib_number
                 b['confidence'] = confidence
                 b_list.append(b)
+            f_size = os.path.getsize(image_file)
+            logger.info(f"File size: {f_size}")
             data = {
                 'bib_photos': b_list,
                 'face_photos': f_list,
