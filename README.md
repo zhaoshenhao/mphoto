@@ -12,7 +12,7 @@ The initial idea came from the **2025 Chilly Half**. I participated in the race 
     a. **FAST API** for frontend development.
     b. Postgresql + pgvector for RDBMS and VectorDB
     c. Async IO
-4. --**AWS deployment** with **S3 as the photo storage**--.
+4. ~~**AWS deployment** with **S3 as the photo storage**.~~
 5. Using google drive or google photo as free photo storage
 
 ---
@@ -22,7 +22,7 @@ The initial idea came from the **2025 Chilly Half**. I participated in the race 
 2. [x] **Develop a backend retrieval tool** that allows users to search for photos based on a provided face image or bib number and package the results.  
 3. [x] **Complete web frontend and backend development and testing.**
 4. [x] **Develop and test deployment scripts.**  
-5. [ ] --**Deploy the system on AWS.**--
+5. [ ] ~~**Deploy the system on AWS.**~~
 6. [ ] **Deploy the system: https://www.compusky.com/mphoto/ **
 
 
